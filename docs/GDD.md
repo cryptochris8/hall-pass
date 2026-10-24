@@ -98,9 +98,10 @@ One floor per run (two-floor schools with stairwells are a later tier, §9). The
 
 ### 3.1 Fairness validator (`src/school/validate.ts`)
 
-Patrols are periodic, so the school's visibility is periodic too. The validator searches a **time-expanded grid**
-(0.5 m nav cells × 0.25 s steps, over one patrol period, with A*) for a route from the start classroom → mission
-goal → start classroom that:
+With the student unseen and silent, every staff member's movement is a fixed function of time (patrols, seeded
+wandering, PA events). The validator runs the staff forward for the whole bell duration and searches a
+**time-expanded grid** (0.5 m nav cells × 0.25 s steps, with A*) for a route from the start classroom → mission
+goal → start classroom that (details in `docs/ARCHITECTURE.md` §4):
 - is never inside any staff vision cone or camera cone, with **≥ 0.6 s clearance** before and after each crossing
   (more on easier tiers);
 - uses sneaking speed only through noise-sensitive zones;

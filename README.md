@@ -6,4 +6,4 @@ A procedural 3D browser stealth arcade game for teens (13–17), and the fifth g
 (MAILBOX MAYHEM, TRASH PANDA TROUBLE, ATHLETE MAYHEM, BAD HAIR DAY!). It uses the same stack: Vite + TypeScript +
 Three.js, every model and sound procedural, no backend.
 
-Design-only so far: see [`docs/GDD.md`](docs/GDD.md).
+Design-only so far: see [`docs/GDD.md`](docs/GDD.md) (game design) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (modules, contracts, determinism rules, build order).
