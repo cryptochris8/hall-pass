@@ -1,0 +1,14 @@
+node_modules
+dist
+out
+build
+.env
+.env.local
+*.log
+.DS_Store
+shots/
+test-results/
+playwright-report/
+
+# Local Netlify folder
+.netlify
