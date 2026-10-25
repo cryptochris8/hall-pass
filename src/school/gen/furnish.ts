@@ -143,7 +143,8 @@ function furnishRoom(ctx: Ctx, room: Room, rng: Rng, anchors: Furnished['anchors
           place(ctx, big ? 'table' : 'desk', cx + i * 1.9, cz + j * 1.6, dw, dd, back, rng.chance(0.4) ? ['lowCover', 'throwables'] : ['lowCover']);
         }
       }
-      const t = backAt(1.3);
+      // 0.9 m off the back wall: clear of the front desk row (which ends 1.9 m from the room centre).
+      const t = backAt(0.9);
       place(ctx, 'teacherDesk', t.x, t.z, alongX ? 1.6 : 0.8, alongX ? 0.8 : 1.6, back, ['lowCover', 'throwables']);
       if (room.tags.includes('start')) {
         // Your desk: the one nearest the room centre; you sit just behind it (toward the door side).

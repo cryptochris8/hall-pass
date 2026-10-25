@@ -15,13 +15,12 @@ import { damp } from '../core/math';
 import { PAL } from '../render/palette';
 import { modelMaterial } from '../render/models/materials';
 import { toon, toonGradient } from '../render/toon';
-import { buildDressing, furnitureGeometry, type PropVariant } from './props';
+import { buildDressing, furnitureFootprint, furnitureGeometry, furnitureMatrix, isEmbeddedFurniture, variantOf } from './props';
 import {
   CELL,
   CELL_CORRIDOR,
   FINE,
   F_SOLID,
-  type Furniture,
   type RoomKind,
   type SchoolPlan,
 } from '../school/types';
@@ -201,7 +200,18 @@ export function buildSchoolView(plan: SchoolPlan, opts: { shadows: boolean }): S
   const boxGeo = new THREE.BoxGeometry(1, 1, 1);
   boxGeo.translate(0, 0.5, 0);
   disposables.push(boxGeo);
-  const rects = mergeRects(visibleSolidMask(plan), plan.fine.cols, plan.fine.rows);
+  // Wall boxes come from solid fine cells — minus the cells under free-standing solid furniture (stalls, shelves,
+  // bleachers, the cafeteria counter), which draw as their own models.
+  const wallMask = visibleSolidMask(plan);
+  for (const f of plan.furniture) {
+    if (isEmbeddedFurniture(f) || !['stall', 'shelf', 'bleachers', 'vending', 'trophyCase', 'locker'].includes(f.kind)) continue;
+    const c0 = Math.floor((f.x - f.w / 2) / FINE + 1e-6);
+    const r0 = Math.floor((f.z - f.d / 2) / FINE + 1e-6);
+    const c1 = Math.ceil((f.x + f.w / 2) / FINE - 1e-6);
+    const r1 = Math.ceil((f.z + f.d / 2) / FINE - 1e-6);
+    for (let r = r0; r < r1; r++) for (let c = c0; c < c1; c++) wallMask[r * plan.fine.cols + c] = 0;
+  }
+  const rects = mergeRects(wallMask, plan.fine.cols, plan.fine.rows);
   // Enclosed no-go cells (layout cells with no room, away from the grid edge) get a low slab, so they read as
   // building mass instead of a dark pit.
   const slabs: { c: number; r: number }[] = [];
@@ -242,26 +252,19 @@ export function buildSchoolView(plan: SchoolPlan, opts: { shadows: boolean }): S
   const furn = plan.furniture;
   const groups = new Map<string, { geo: THREE.BufferGeometry; items: number[] }>();
   const furnBoxes: CutBox[] = [];
-  const furnPlace: { x: number; z: number; face: number; group: string; slot: number }[] = [];
+  const furnPlace: { group: string; slot: number }[] = [];
   furn.forEach((f, i) => {
-    const side = Math.abs(Math.sin(f.face)) > 0.5;
-    const localW = side ? f.d : f.w;
-    const localD = side ? f.w : f.d;
-    const variant: PropVariant = f.tags.includes('goal') ? 'goal' : f.tags.includes('hide') ? 'hide' : 'plain';
+    const { localW, localD } = furnitureFootprint(f);
+    const variant = variantOf(f);
     const key = `${f.kind}|${localW.toFixed(2)}|${localD.toFixed(2)}|${f.h.toFixed(2)}|${variant}`;
     let g = groups.get(key);
     if (!g) {
       g = { geo: furnitureGeometry(f.kind, localW, localD, f.h, variant), items: [] };
       groups.set(key, g);
     }
-    let { x, z } = f;
-    if (isEmbedded(f)) {
-      x += Math.round(Math.sin(f.face)) * 0.04;
-      z += Math.round(Math.cos(f.face)) * 0.04;
-    }
-    furnPlace.push({ x, z, face: f.face, group: key, slot: g.items.length });
+    furnPlace.push({ group: key, slot: g.items.length });
     g.items.push(i);
-    furnBoxes.push({ x0: x - f.w / 2, z0: z - f.d / 2, x1: x + f.w / 2, z1: z + f.d / 2, full: f.h, h: f.h });
+    furnBoxes.push({ x0: f.x - f.w / 2, z0: f.z - f.d / 2, x1: f.x + f.w / 2, z1: f.z + f.d / 2, full: f.h, h: f.h });
   });
   const furnMeshes = new Map<string, THREE.InstancedMesh>();
   for (const [key, g] of groups) {
@@ -271,16 +274,11 @@ export function buildSchoolView(plan: SchoolPlan, opts: { shadows: boolean }): S
     furnMeshes.set(key, mesh);
     root.add(mesh);
   }
-  const q = new THREE.Quaternion();
-  const yAxis = new THREE.Vector3(0, 1, 0);
-  const vPos = new THREE.Vector3();
-  const vScale = new THREE.Vector3();
   const mf = new THREE.Matrix4();
   /** Write one furniture instance; `squash` < 1 lowers it with the wall cut. */
   const writeFurn = (i: number, squash: number): void => {
     const p = furnPlace[i]!;
-    q.setFromAxisAngle(yAxis, p.face);
-    mf.compose(vPos.set(p.x, 0, p.z), q, vScale.set(1, Math.max(0.02, squash), 1));
+    furnitureMatrix(furn[i]!, mf, Math.max(0.02, squash));
     furnMeshes.get(p.group)!.setMatrixAt(p.slot, mf);
   };
   furn.forEach((_, i) => writeFurn(i, 1));
@@ -353,7 +351,8 @@ export function buildSchoolView(plan: SchoolPlan, opts: { shadows: boolean }): S
   return {
     root,
     stats: { wallBoxes: rects.length + slabs.length, furniture: furn.length, furnitureMeshes: furnMeshes.size, dressingMeshes: dressing.stats.meshes },
-    update(dt, fx, fz, mode, view) {
+    update(dtIn, fx, fz, mode, view) {
+      const dt = Math.min(0.1, Math.max(0, dtIn));
       cutTimer += dt;
       const target = (b: CutBox): number => {
         if (mode === 'full') return b.full;
@@ -416,11 +415,6 @@ export function buildSchoolView(plan: SchoolPlan, opts: { shadows: boolean }): S
   };
 }
 
-/** Lockers, vending machines and trophy cases set into the corridor's locker mass (not the cafeteria counter). */
-function isEmbedded(f: Furniture): boolean {
-  if (f.kind === 'locker' || f.kind === 'trophyCase') return true;
-  return f.kind === 'vending' && Math.min(f.w, f.d) <= 0.5 && Math.max(f.w, f.d) <= 1.8;
-}
 
 /**
  * Does box `b` (at full height) stand between the camera and any of the view points? Slab-clips the segment

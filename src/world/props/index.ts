@@ -1,28 +1,22 @@
-// Props module entry (contract: src/world/props/types.ts). STUB by the integrator until the props owner lands the
-// real models: plain inked boxes for furniture and no dressing.
-import * as THREE from 'three';
-import { inked } from '../../render/models/common';
-import type { FurnitureKind, SchoolPlan } from '../../school/types';
-import type { Dressing, PropVariant } from './types';
+// Props module entry (contract: src/world/props/types.ts).
+//  • furnitureGeometry(): procedural inked furniture per kind/size/variant (furniture.ts), cached.
+//  • buildDressing(plan): door frames, signs, windows, boards, hallway and room dressing (dressing.ts).
+import type * as THREE from 'three';
+import { cachedGeo } from '../../render/models/common';
+import type { FurnitureKind } from '../../school/types';
+import { buildFurniture } from './furniture';
+import type { PropVariant } from './types';
 
 export * from './types';
+export { buildDressing } from './dressing';
+export { EMBED_PROUD, furnitureFootprint, furnitureMatrix, isEmbeddedFurniture, variantOf } from './placement';
+export { LOCKER_RECESS } from './furniture';
 
-const COLOR: Partial<Record<FurnitureKind, number>> = { locker: 0x7fa58c, vending: 0xc0392b, shelf: 0x7a5a3e, stall: 0x9aa3ad };
-const cache = new Map<string, THREE.BufferGeometry>();
-
+/**
+ * Furniture model for one kind/size/variant: merged, vertex-coloured, inked, built at the origin with feet at y = 0,
+ * facing local +Z, fitting localW (X) × localD (Z) × h. Cached (shared: never dispose it). Material: modelMaterial().
+ */
 export function furnitureGeometry(kind: FurnitureKind, localW: number, localD: number, h: number, variant: PropVariant): THREE.BufferGeometry {
-  const key = `${kind}|${localW.toFixed(2)}|${localD.toFixed(2)}|${h.toFixed(2)}|${variant}`;
-  let g = cache.get(key);
-  if (!g) {
-    const b = inked();
-    b.box(localW, h, localD, variant === 'goal' ? 0x2e8bff : (COLOR[kind] ?? 0xb98a5a), { at: [0, h / 2, 0] });
-    g = b.build();
-    cache.set(key, g);
-  }
-  return g;
-}
-
-export function buildDressing(plan: SchoolPlan): Dressing {
-  void plan;
-  return { root: new THREE.Group(), wallItems: [], stats: { meshes: 0, triangles: 0 }, dispose() {} };
+  const key = `props|${kind}|${localW.toFixed(2)}|${localD.toFixed(2)}|${h.toFixed(2)}|${variant}`;
+  return cachedGeo(key, () => buildFurniture(kind, localW, localD, h, variant));
 }
