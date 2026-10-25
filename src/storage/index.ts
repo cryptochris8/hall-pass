@@ -35,6 +35,10 @@ export interface Settings {
   walls: WallsSetting;
   cones: boolean;
   reducedMotion: boolean;
+  /** Volumes 0..1 and mute (M / the settings screen). */
+  music: number;
+  sfx: number;
+  muted: boolean;
 }
 
 export interface SaveData {
@@ -61,7 +65,7 @@ export function defaultSave(): SaveData {
     records: {},
     daily: {},
     totals: { runs: 0, ghosts: 0, detentions: 0, snacks: 0 },
-    settings: { camera: 'close', walls: 'occlude', cones: true, reducedMotion: false },
+    settings: { camera: 'close', walls: 'occlude', cones: true, reducedMotion: false, music: 0.8, sfx: 1, muted: false },
   };
 }
 
@@ -122,6 +126,9 @@ export function sanitize(raw: unknown): SaveData {
       walls: pick(s.walls, ['occlude', 'cutaway', 'low', 'full'] as const, 'occlude'),
       cones: s.cones !== false,
       reducedMotion: s.reducedMotion === true,
+      music: typeof s.music === 'number' && Number.isFinite(s.music) ? Math.min(1, Math.max(0, s.music)) : 0.8,
+      sfx: typeof s.sfx === 'number' && Number.isFinite(s.sfx) ? Math.min(1, Math.max(0, s.sfx)) : 1,
+      muted: s.muted === true,
     };
   }
   return out;

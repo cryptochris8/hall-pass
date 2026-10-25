@@ -333,6 +333,13 @@ worker with their par and cached (`src/game/schools.ts`), so the next week day i
 `src/ui` (`Ui` screen manager driven by MenuActions, `screens.ts` mission card + report card, `text.ts`). Save data:
 `src/storage` (sanitized on load, every access guarded).
 
+**M5 audio as built.** `src/audio`: `synth`, `noise`, `limits`, `transport`, `theory`, `instruments`, `meter` copied
+from ATHLETE MAYHEM; `mixer` (ambience bus, PA echo, hiding muffle), `music` (sneak track follows suspicion) and
+`index` (engine lifecycle and recovery) adapted; `song` (four original tunes), `sfx` (school effects and babble
+voices), `ambience` (SchoolBed) and `qa` (offline render checks, `dev/audio.html` → `window.__audioQa()`) new.
+`src/game/sound.ts` (SoundDirector) maps screens, suspicion and SimEvents to audio; the app owns unlock (gesture
+listener + input first gesture), volumes and mute.
+
 Owners work in parallel from M3 on: **school**, **sim**, **world**, **people**, **audio**, **ui**, with
 **integration** owning game, render core, input, share, storage, headless and e2e.
 

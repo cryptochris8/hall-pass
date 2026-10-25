@@ -12,6 +12,8 @@
 //   (interpolated by the leftover alpha) → camera → render → HUD.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
+import { createAudio } from '../audio';
+import type { AudioEngine } from '../audio/types';
 import { clamp } from '../core/math';
 import { hashInts } from '../core/rng';
 import { createInput, type InputManager } from '../input';
@@ -30,10 +32,12 @@ import { DIFFICULTY_NAME, DIFFICULTY_NOTE, GOAL_LINE, MISSION_NAME, TIER_NAME, T
 import { buildSnacks, buildStealthFx, type SnackView, type StealthFx } from '../world/fx';
 import { buildActors, takeSnapshot, type ActorsView, type Snapshot } from '../world/actors';
 import { buildSchoolView, type SchoolView, type ViewPoints, type WallMode } from '../world/school';
+import { installAudioUnlock } from './audioUnlock';
 import { renderDpr } from './device';
 import { Hud, type CameraSettings } from './hud';
 import { civilDay, dailyConfig, dailyNumber, todayKey, unlocksNext, weekConfig, weekGrade, weekPlan, WEEKDAYS } from './modes';
 import { Schools, type BuiltSchool } from './schools';
+import { SoundDirector, type SoundScreen } from './sound';
 import { installViewport } from './viewport';
 
 export interface AppParams {
@@ -85,6 +89,9 @@ export class App {
   private readonly ui: Ui;
   private readonly store = new Store();
   private readonly schools = new Schools();
+  private readonly audio: AudioEngine;
+  private readonly sound: SoundDirector;
+  private readonly unlockOff: () => void;
   private readonly lights: { hemi: THREE.HemisphereLight; sun: THREE.DirectionalLight };
   private plan: SchoolPlan | null = null;
   private par = 0;
@@ -147,7 +154,14 @@ export class App {
     this.renderer.scene.add(hemi, sun, sun.target);
     this.lights = { hemi, sun };
 
+    // Audio: every activating gesture unlocks it while it's locked (phones need the end of a tap).
+    this.audio = createAudio();
+    this.sound = new SoundDirector(this.audio);
+    this.unlockOff = installAudioUnlock(window, this.audio);
+    this.applyVolumes();
+
     this.input = createInput({ touchRoot: root });
+    this.input.onFirstGesture(() => this.audio.unlock());
     this.input.setMode('menu');
     this.input.setScheme({
       move: 'xy',
@@ -172,6 +186,7 @@ export class App {
     );
     this.hud.root.hidden = true;
     this.ui = new Ui(root);
+    this.ui.sound = (k) => this.audio.play(k === 'move' ? 'uiMove' : k === 'confirm' ? 'uiConfirm' : 'uiBack');
 
     const unlocked = this.store.data.unlocked;
     this.quick = {
@@ -206,6 +221,13 @@ export class App {
     this.input.reset();
     const run = this.mode.kind !== 'attract';
     this.hud.root.hidden = !run || p === 'title' || p === 'menu' || p === 'loading';
+    if (p !== 'boot') this.sound.setScreen(p as SoundScreen, run);
+  }
+
+  private applyVolumes(): void {
+    const s = this.store.data.settings;
+    this.audio.setVolumes({ master: 1, music: s.music, sfx: s.sfx });
+    this.audio.setMuted(s.muted);
   }
 
   private showTitle(): void {
@@ -484,6 +506,30 @@ export class App {
         },
         {
           kind: 'choice',
+          label: 'Music',
+          options: VOLUME_STEPS,
+          value: volumeKey(s.music),
+          onChange: (v) => {
+            s.music = Number(v);
+            this.applyVolumes();
+            save();
+          },
+        },
+        {
+          kind: 'choice',
+          label: 'Sound effects',
+          sub: 'M mutes everything',
+          options: VOLUME_STEPS,
+          value: volumeKey(s.sfx),
+          onChange: (v) => {
+            s.sfx = Number(v);
+            this.applyVolumes();
+            save();
+            this.audio.play('item');
+          },
+        },
+        {
+          kind: 'choice',
           label: 'Reduced motion',
           sub: 'Skips the fly-over and keeps the camera calm',
           options: onOff,
@@ -500,12 +546,13 @@ export class App {
           onPick: () => {
             if (!this.resetArmed) {
               this.resetArmed = true;
-              this.showSettings(back, 4);
+              this.showSettings(back, 6);
               return;
             }
             this.resetArmed = false;
             this.store.reset();
-            this.showSettings(back, 4);
+            this.applyVolumes();
+            this.showSettings(back, 6);
           },
         },
         { kind: 'button', label: 'BACK', onPick: () => ((this.resetArmed = false), back()) },
@@ -613,6 +660,7 @@ export class App {
     this.renderer.scene.add(this.view.root, this.actors.root, this.fx.root, this.snacks.root);
     this.renderer.invalidateCompile();
     this.acc = 0;
+    this.sound.reset();
     this.hud.hideBanner();
     this.lead.set(0, 0);
     this.placeCamera(true);
@@ -737,6 +785,15 @@ export class App {
     }
     items.push({ kind: 'button', label: 'MENU', onPick: () => this.quitToMenu() });
     this.store.save();
+    setTimeout(() => {
+      if (this.phase !== 'report') return;
+      this.audio.play('stamp');
+      setTimeout(() => {
+        if (this.phase !== 'report') return;
+        this.audio.play(r.grade === 'A+' || r.grade === 'A' ? 'gradeA' : 'gradeLow');
+        if (newBest && r.total > 0) setTimeout(() => this.audio.play('newBest'), 500);
+      }, 250);
+    }, 300);
     this.ui.show({
       id: 'report',
       layout: 'report',
@@ -766,6 +823,16 @@ export class App {
     this.clockT += dt;
     this.phaseT += dt;
     const actions = input.getMenuActions();
+    if (actions.includes('mute')) {
+      const st = this.store.data.settings;
+      st.muted = !st.muted;
+      this.applyVolumes();
+      this.store.save();
+      this.hud.showBanner(st.muted ? 'Sound off' : 'Sound on', 'M toggles sound', null);
+      setTimeout(() => {
+        if (this.phase === 'playing') this.hud.hideBanner();
+      }, 900);
+    }
     if (this.ui.visible) this.ui.handle(actions);
     else if (this.phase === 'playing') {
       for (const a of actions) if (a === 'pause') this.pause();
@@ -813,6 +880,7 @@ export class App {
       }
       if (steps === MAX_STEPS) this.acc = 0; // slow device: run slower, never diverge
     }
+    if (!attract && this.phase === 'playing') this.sound.update(sim, this.plan, dt);
     const frozen = !running;
     const alpha = frozen ? 1 : clamp(this.acc / SIM_DT, 0, 1);
     this.actors.update(this.prev, sim, alpha, this.camera.cones, this.phase === 'paused' ? 0 : dt);
@@ -861,6 +929,7 @@ export class App {
     this.fx?.onEvents(ev);
     const quiet = this.mode.kind === 'attract';
     const plan = this.plan!;
+    if (!quiet) this.sound.onEvents(ev, this.sim!, plan);
     for (const e of ev) {
       if (e.t === 'pickup') this.view?.setGoalDone(e.anchor, true);
       if (e.t === 'snack') this.snacks?.take(e.index);
@@ -1025,11 +1094,14 @@ export class App {
       panel: (open: boolean) => this.hud.togglePanel(open),
       stats: () => ({ ...this.renderer.stats(), ...(this.view?.stats ?? {}), cut: this.view?.cutCount() ?? 0, focus: this.actors ? [this.actors.focus.x, this.actors.focus.z] : null }),
       ready: () => this.sim !== null,
+      audio: () => this.audio,
     };
   }
 
   dispose(): void {
     cancelAnimationFrame(this.raf);
+    this.unlockOff();
+    this.audio.dispose();
     this.schools.dispose();
     this.input.dispose();
     this.view?.dispose();
@@ -1040,3 +1112,18 @@ export class App {
 }
 
 const GRADE_ORDER = ['A+', 'A', 'B', 'C', 'D'];
+
+const VOLUME_STEPS = [
+  { value: '0', label: 'OFF' },
+  { value: '0.25', label: '25%' },
+  { value: '0.5', label: '50%' },
+  { value: '0.8', label: '80%' },
+  { value: '1', label: '100%' },
+];
+
+/** The volume step nearest a stored volume. */
+function volumeKey(v: number): string {
+  let best = VOLUME_STEPS[0]!.value;
+  for (const s of VOLUME_STEPS) if (Math.abs(Number(s.value) - v) < Math.abs(Number(best) - v)) best = s.value;
+  return best;
+}

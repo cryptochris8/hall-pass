@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>Audio Bench — HALL PASS</title>
+    <style>
+      body { margin: 0; padding: 16px; background: #1d2433; color: #f4f1ea; font: 600 14px/1.4 system-ui, sans-serif; }
+      h1 { margin: 0 0 8px; font-size: 22px; }
+      h2 { margin: 16px 0 6px; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: #ffd34d; }
+      .row { display: flex; flex-wrap: wrap; gap: 6px; }
+      button { font: inherit; border: 0; border-radius: 8px; padding: 7px 10px; background: #f4f1ea; color: #1d2433; cursor: pointer; }
+      button.on { background: #2e8bff; color: #fff; }
+      label { display: inline-flex; gap: 6px; align-items: center; margin-right: 12px; }
+      pre { white-space: pre-wrap; font: 12px/1.35 ui-monospace, Menlo, monospace; background: #111723; padding: 10px; border-radius: 8px; }
+    </style>
+  </head>
+  <body>
+    <h1>HALL PASS — audio bench</h1>
+    <p>Click anything once to unlock audio.</p>
+    <h2>Music</h2><div class="row" id="music"></div>
+    <h2>Suspicion (sneak track)</h2>
+    <label>intensity <input id="intensity" type="range" min="0" max="1" step="0.05" value="0" /></label>
+    <label><input id="ambience" type="checkbox" /> ambience</label>
+    <label><input id="muffle" type="checkbox" /> hidden (muffle)</label>
+    <h2>Sound effects</h2><div class="row" id="sfx"></div>
+    <h2>QA</h2><button id="qa">Run offline QA</button><pre id="out"></pre>
+    <script type="module" src="./audio.ts"></script>
+  </body>
+</html>

@@ -58,6 +58,9 @@ export class Ui {
   private choiceVals: string[] = [];
   private readonly mouse = { moved: false };
 
+  /** UI blips (wired to the audio engine by the app). */
+  sound: ((kind: 'move' | 'confirm' | 'back') => void) | null = null;
+
   constructor(parent: HTMLElement) {
     const style = document.createElement('style');
     style.textContent = MENU_CSS;
@@ -161,6 +164,7 @@ export class Ui {
     for (const a of actions) {
       used = true;
       if (spec.onAny && (a === 'confirm' || a === 'pause')) {
+        this.sound?.('confirm');
         spec.onAny();
         return true;
       }
@@ -171,7 +175,10 @@ export class Ui {
         if (it?.kind === 'choice') this.cycle(a === 'left' ? -1 : 1);
         else if (spec.row) this.move(a === 'left' ? -1 : 1);
       } else if (a === 'confirm') this.activate();
-      else if (a === 'back' || a === 'pause') spec.onBack?.();
+      else if ((a === 'back' || a === 'pause') && spec.onBack) {
+        this.sound?.('back');
+        spec.onBack();
+      }
       if (this.spec !== spec) return true; // the action changed screens
     }
     return used;
@@ -186,6 +193,7 @@ export class Ui {
       const it = this.spec!.items[i]!;
       if (!(it.kind === 'button' && it.disabled)) break;
     }
+    if (i !== this.focus) this.sound?.('move');
     this.setFocus(i);
   }
 
@@ -199,7 +207,9 @@ export class Ui {
     const it = this.spec?.items[this.focus];
     if (!it) return;
     if (it.kind === 'button') {
-      if (!it.disabled) it.onPick();
+      if (it.disabled) return;
+      this.sound?.('confirm');
+      it.onPick();
     } else this.cycle(1);
   }
 
@@ -210,6 +220,7 @@ export class Ui {
     const cur = Math.max(0, opts.findIndex((o) => o.value === this.choiceVals[this.focus]));
     const next = opts[(cur + d + opts.length) % opts.length]!;
     this.choiceVals[this.focus] = next.value;
+    this.sound?.('move');
     this.refreshChoices();
     it.onChange(next.value);
   }

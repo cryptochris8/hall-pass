@@ -364,6 +364,26 @@ All synthesized at runtime (Web Audio):
 - **Voices:** babble voices per staff member (pitch and timbre per character) with captions: "HEY!", "Hm?",
   "Where's your hall pass?", Hargrove's "Not on my watch."
 
+**As built (audio, part of M5).** Everything is synthesized at runtime (`src/audio`; engine, mixer, instruments and
+QA harness copied from ATHLETE MAYHEM, the songs, effects, voices and ambience new):
+- **Music:** four original tracks — "Hall Pass" (title, swung G-minor caper), "Free Period" (menus, lo-fi),
+  "Out of Class" (the run) and "Report Card" (the Hall Report jingle and loop). The run track has three layers
+  chosen by the most alarmed staff member on screen: calm (walking bass, ticking hats, e-piano) → curious (groove
+  drums, chip melody, arps) → spotted / chase (four-on-the-floor, chugging guitar, brass, +16 BPM); the last 20 s
+  of the bell hold it at least at the middle layer. The mission card plays a tense two-chord sting over silence.
+- **SFX:** sneaker steps and sprint squeaks (louder on polished floors; sneaking is a soft pad), locker doors and
+  creaks, eraser toss and landing, pick-ups and snacks, "?" and "!" stings, the hall monitor's whistle when a
+  patroller gives chase, a record scratch for BUSTED, the hall-pass flash, the camera's servo and beeps, the PA
+  ding-dong with a babbled announcement through a telephone-band filter, the school bell, a tick-tock at 30 s and
+  10 s, the lunch bell, the vending machine (whir, a rattle every second, the clunk, coins back on a cancel), a
+  brass hit + bell on success and a sad trombone on DETENTION. Staff sounds are panned and quieter with distance.
+- **Voices:** babble (formant blips) per character — "Hey!", "Hm?", "Where are we going?", "Oh — carry on.",
+  Preston's tattle, the lunch staff's "Not yet" — each person with their own pitch (Hargrove low, Preston high).
+- **Ambience:** fluorescent hum, classes murmuring through the walls, HVAC, and now and then a far locker slam, a
+  door, a teacher's voice, a chair scrape or a cough. Hiding muffles the world (music and ambience low-passed).
+- Settings has Music and Sound-effect volumes; M mutes. Not built: the phone-ringtone decoy (there is no phone
+  decoy item) and wet floors.
+
 ## 15. Controls
 
 | Action | Keyboard | Gamepad (PS / Xbox) | Touch |
