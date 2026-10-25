@@ -1,52 +1,19 @@
-// People module entry (contract: src/people/types.ts). STUB by the integrator until the people owner lands the
-// ported rig: a capsule body + head so the world can integrate against the real API.
-import * as THREE from 'three';
-import { toon } from '../render/toon';
+// People module entry (contract: src/people/types.ts). Procedural inked toon people — the student, the staff and
+// extra students — ported from Bad Hair Day's family rig (src/people/rig.ts and friends).
+import { deriveLook } from './looks';
+import { PersonRig } from './rig';
 import type { Person, PersonLook, PersonSpec } from './types';
 
 export * from './types';
+export { CART } from './props';
+export { SKIN_TONES } from './palette';
 
-const TOPS = [0x3b6fd6, 0x8a6f5a, 0x5a5f73, 0x6b3f5f, 0x5f7a6a, 0xb08a2e, 0x7a6a8f];
-
+/** The look createPerson(spec) would use (pure: same spec → same look; `spec.look` overrides win). */
 export function lookFor(spec: PersonSpec): PersonLook {
-  return {
-    skin: spec.seed % 8,
-    hairStyle: 'short',
-    hair: 0x3a2a1e,
-    top: TOPS[spec.seed % TOPS.length]!,
-    bottom: 0x2f3a52,
-    shoes: 0xf2f2f2,
-    glasses: false,
-    backpack: spec.role === 'student' ? 0xc0392b : null,
-    headphones: false,
-    ...spec.look,
-  };
+  return deriveLook(spec);
 }
 
+/** Build a person (same seed + role → same person). Call update(dt) every frame; dispose() when done. */
 export function createPerson(spec: PersonSpec): Person {
-  const look = lookFor(spec);
-  const root = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.75, 4, 12).translate(0, 0.66, 0), toon(look.top));
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 16, 12).translate(0, 1.48, 0), toon(0xe8b48a));
-  root.add(body, head);
-  return {
-    role: spec.role,
-    look,
-    root,
-    height: 1.72,
-    setMotion() {},
-    setLook(yaw) {
-      head.rotation.y = Math.max(-1.3, Math.min(1.3, yaw));
-    },
-    play() {
-      return 0.5;
-    },
-    setExpression() {},
-    update() {},
-    dispose() {
-      body.geometry.dispose();
-      head.geometry.dispose();
-      root.removeFromParent();
-    },
-  };
+  return new PersonRig(spec);
 }

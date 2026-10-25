@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HALL PASS dev — PEOPLE</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #1d2433; }
+      #app { position: fixed; inset: 0; }
+      .label {
+        position: fixed; transform: translate(-50%, 0); pointer-events: none; z-index: 5;
+        font: 800 11px/1 system-ui, sans-serif; color: #1d2433; background: #f4f1ea;
+        border: 2px solid #1d2433; border-radius: 999px; padding: 3px 8px; white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="./people.ts"></script>
+  </body>
+</html>
