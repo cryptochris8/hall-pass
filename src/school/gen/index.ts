@@ -9,7 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { Rng, hashInts } from '../../core/rng';
 import { BELL_SECONDS, TIERS } from '../tiers';
-import type { MissionId, Room, SchoolPlan, TierId } from '../types';
+import type { MissionId, PaEvent, PaEventId, Room, SchoolPlan, StaffSpawn, TierId } from '../types';
 import { buildFine, floodOpen } from './fine';
 import { furnish } from './furnish';
 import { buildSpine, growBranches, newLayout, placeRooms } from './layout';
@@ -38,6 +38,7 @@ const SYS_FINE = 0x5c4002;
 const SYS_FURNISH = 0x5c4003;
 const SYS_STAFF = 0x5c4004;
 const SYS_NAME = 0x5c4005;
+const SYS_PA = 0x5c4006;
 
 export function generateSchool(config: GenConfig): SchoolPlan {
   for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
@@ -109,7 +110,7 @@ function tryGenerate(config: GenConfig, attempt: number): SchoolPlan | null {
     extras: [],
     snacks: [],
     throwables: [],
-    pa: [],
+    pa: schedulePa(config.tier, staff, rooms, bellTicks, sub(SYS_PA)),
     bellTicks,
     rerolls: attempt,
     fallback: false,
@@ -139,3 +140,29 @@ export function planHash(plan: SchoolPlan): number {
   return h >>> 0;
 }
 
+
+/**
+ * Step 7 (GDD §6.6): 1–3 PA announcements between 20 % and 70 % of the bell, at least 25 s apart, only ones that
+ * have someone to send (the VP needs an office, the custodian a gym or cafeteria). "Hats off" can always play.
+ */
+export function schedulePa(tier: TierId, staff: readonly StaffSpawn[], rooms: readonly Room[], bellTicks: number, rng: Rng): PaEvent[] {
+  const has = (a: StaffSpawn['archetype']): boolean => staff.some((s) => s.archetype === a);
+  const room = (k: Room['kind']): boolean => rooms.some((r) => r.kind === k);
+  const pool: PaEventId[] = ['hatsOff'];
+  if (has('investigator') && room('office')) pool.push('vpToOffice');
+  if (has('wanderer') && (room('gym') || room('cafeteria'))) pool.push('custodialToGym');
+  if (has('patroller')) pool.push('carLights');
+  const count = Math.min(pool.length, tier === 1 ? 1 : rng.int(1, 3));
+  const ids = pool.slice();
+  const out: PaEvent[] = [];
+  for (let k = 0; k < count; k++) {
+    const id = ids.splice(rng.int(0, ids.length - 1), 1)[0]!;
+    let tick = 0;
+    for (let tries = 0; tries < 20; tries++) {
+      tick = rng.int(Math.floor(bellTicks * 0.2), Math.floor(bellTicks * 0.7));
+      if (out.every((e) => Math.abs(e.tick - tick) >= 25 * 60)) break;
+    }
+    out.push({ tick, id });
+  }
+  return out.sort((a, b) => a.tick - b.tick);
+}

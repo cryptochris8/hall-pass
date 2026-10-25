@@ -58,6 +58,8 @@ export interface PadFrame extends PadMove {
   /** L1 / R1 went down this poll (gameplay only). */
   prevEdge: boolean;
   nextEdge: boolean;
+  /** L2 / LT held (sneak, gameplay only). */
+  sneak: boolean;
   /** A pad is connected and driving this frame. */
   active: boolean;
 }
@@ -70,6 +72,7 @@ export const createPadFrame = (): PadFrame => ({
   alt: false,
   prevEdge: false,
   nextEdge: false,
+  sneak: false,
   active: false,
 });
 
@@ -179,6 +182,7 @@ export class GamepadInput {
     out.primary = false;
     out.secondary = false;
     out.alt = false;
+    out.sneak = false;
     out.prevEdge = false;
     out.nextEdge = false;
     if (a === null || !a.seen) {
@@ -197,6 +201,7 @@ export class GamepadInput {
         out.primary = (eff & SLOT_PRIMARY) !== 0;
         out.secondary = (eff & SLOT_SECONDARY) !== 0;
         out.alt = (eff & SLOT_ALT) !== 0;
+        out.sneak = (now & PB.L2) !== 0;
         if (edge & PB.L1) out.prevEdge = true;
         if (edge & PB.R1) out.nextEdge = true;
         if (edge & PB.START) menu.push('pause');

@@ -25,6 +25,21 @@ export function initStaff(spawn: StaffSpawn): StaffState {
     level: 'calm',
     ignore: 0,
     seesStudent: false,
+    mode: 'route',
+    modeT: 0,
+    tx: w.x,
+    tz: w.z,
+    path: [],
+    pathI: 0,
+    replan: 0,
+    lastX: w.x,
+    lastZ: w.z,
+    chaseT: 0,
+    lostT: 0,
+    wait: -1,
+    sawHide: -1,
+    reportTo: -1,
+    errandTicks: 0,
   };
 }
 

@@ -34,7 +34,9 @@ export type KeyRole =
   /** Q: previous target (gameplay only). */
   | 'prevTab'
   /** R: next target (gameplay only). */
-  | 'nextTab';
+  | 'nextTab'
+  /** C: sneak, held (gameplay only). */
+  | 'sneak';
 
 export type AxisRole = 'left' | 'right' | 'up' | 'down';
 
@@ -63,6 +65,7 @@ const CODE_ROLES: Readonly<Record<string, KeyRole>> = {
   KeyM: 'mute',
   KeyQ: 'prevTab',
   KeyR: 'nextTab',
+  KeyC: 'sneak',
 };
 
 /** Fallback by `KeyboardEvent.key` (lower-cased). Includes legacy Edge/IE names. */
@@ -95,6 +98,7 @@ const KEY_ROLES: Readonly<Record<string, KeyRole>> = {
   m: 'mute',
   q: 'prevTab',
   r: 'nextTab',
+  c: 'sneak',
 };
 
 /** Resolve a key event's role (null = not a key the game uses). */

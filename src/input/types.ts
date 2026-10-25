@@ -47,9 +47,11 @@ export interface GameControls {
   alt: boolean;
   altPressed: boolean;
   altReleased: boolean;
-  /** Edge: switch to the previous / next target (girl to brush, item…). Q / R · L1 / R1. */
+  /** Edge: switch to the previous / next target. Q / R · L1 / R1. */
   prevPressed: boolean;
   nextPressed: boolean;
+  /** Held: sneak (HALL PASS). C · L2 / LT. Touch players sneak with a light joystick tilt instead. */
+  sneak: boolean;
 }
 
 export const NO_CONTROLS: Readonly<GameControls> = Object.freeze({
@@ -66,6 +68,7 @@ export const NO_CONTROLS: Readonly<GameControls> = Object.freeze({
   altReleased: false,
   prevPressed: false,
   nextPressed: false,
+  sneak: false,
 });
 
 /** Icons the touch buttons + prompts can show (drawn as inline SVG by input/ui). */

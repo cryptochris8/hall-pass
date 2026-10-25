@@ -137,12 +137,15 @@ export function createInputManager(opts: InputOptions, env: InputEnv): InputMana
     secondaryReleased: false,
     alt: false,
     altPressed: false,
+    sneak: false,
     altReleased: false,
     prevPressed: false,
     nextPressed: false,
   };
   /** Q / R pressed (gameplay) since the previous update(). */
   let kbPrev = false;
+  /** C held (sneak). */
+  let kbSneak = false;
   let kbNext = false;
   const menuPending: MenuAction[] = [];
   const menuOut: MenuAction[] = [];
@@ -224,7 +227,9 @@ export function createInputManager(opts: InputOptions, env: InputEnv): InputMana
     controls.altReleased = false;
     controls.prevPressed = false;
     controls.nextPressed = false;
+    controls.sneak = false;
     kbPrev = false;
+    kbSneak = false;
     kbNext = false;
   }
 
@@ -242,6 +247,10 @@ export function createInputManager(opts: InputOptions, env: InputEnv): InputMana
     if (e.ctrlKey || e.altKey || e.metaKey) return;
     if (isEditable(e.target) && !allowedWhileTyping(role)) return;
     e.preventDefault();
+    if (role === 'sneak') {
+      kbSneak = mode === 'gameplay';
+      return;
+    }
     if (role === 'prevTab' || role === 'nextTab') {
       if (!e.repeat) {
         if (mode === 'gameplay') {
@@ -262,6 +271,7 @@ export function createInputManager(opts: InputOptions, env: InputEnv): InputMana
     const role = keyRole(code, key);
     if (role === null) return;
     // Always release (even with modifiers held) so nothing sticks.
+    if (role === 'sneak') kbSneak = false;
     kb.up(keyId(code, key));
     if (!(e.ctrlKey || e.altKey || e.metaKey) && !isEditable(e.target)) e.preventDefault();
   };
@@ -374,6 +384,7 @@ export function createInputManager(opts: InputOptions, env: InputEnv): InputMana
         rollSlot('alt');
         controls.prevPressed = kbPrev || padF.prevEdge;
         controls.nextPressed = kbNext || padF.nextEdge;
+        controls.sneak = kbSneak || padF.sneak;
         kbPrev = false;
         kbNext = false;
       } else {
