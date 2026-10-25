@@ -13,7 +13,9 @@
 import * as THREE from 'three';
 import { damp } from '../core/math';
 import { PAL } from '../render/palette';
+import { modelMaterial } from '../render/models/materials';
 import { toon, toonGradient } from '../render/toon';
+import { buildDressing, furnitureGeometry, type PropVariant } from './props';
 import {
   CELL,
   CELL_CORRIDOR,
@@ -64,7 +66,7 @@ export interface SchoolView {
   update(dt: number, focusX: number, focusZ: number, mode: WallMode, view: ViewPoints): void;
   /** Hide a goal marker once collected. */
   setGoalDone(anchor: string, done: boolean): void;
-  readonly stats: { wallBoxes: number; furniture: number };
+  readonly stats: { wallBoxes: number; furniture: number; furnitureMeshes: number; dressingMeshes: number };
   /** Debug: how many wall boxes are currently below full height. */
   cutCount(): number;
   dispose(): void;
@@ -82,21 +84,6 @@ const FLOOR: Record<RoomKind, number> = {
   gym: PAL.floorGym,
   bathroom: PAL.floorBath,
   courtyard: PAL.floorCourtyard,
-};
-
-const FURN_COLOR: Record<Furniture['kind'], number> = {
-  desk: PAL.desk,
-  teacherDesk: PAL.desk,
-  locker: PAL.locker,
-  stall: PAL.metal,
-  shelf: PAL.shelf,
-  table: PAL.deskTop,
-  bleachers: PAL.bleachers,
-  vending: PAL.vending,
-  officeDesk: PAL.desk,
-  trophyCase: PAL.trophy,
-  bench: PAL.shelf,
-  planter: PAL.plant,
 };
 
 /** Greedy merge of a fine-cell mask into rectangles (runs per row, then stacked rows with the same span). */
@@ -250,34 +237,62 @@ export function buildSchoolView(plan: SchoolPlan, opts: { shadows: boolean }): S
   const wallInk = new THREE.InstancedMesh(boxGeo, inkMat, cut.length);
   root.add(wallInk);
 
-  // Furniture: one instanced box per piece. Embedded pieces (lockers, vending machines, trophy cases set into the
-  // corridor's locker mass) are drawn as panels standing proud of the wall face.
+  // Furniture: real models from src/world/props, one InstancedMesh per (kind, size, variant). Pieces set into the
+  // corridor's locker mass (lockers, vending machines, trophy cases) stand 4 cm proud of the wall face.
   const furn = plan.furniture;
-  const furnMesh = new THREE.InstancedMesh(boxGeo, toon(0xffffff), Math.max(1, furn.length));
-  furnMesh.castShadow = opts.shadows;
-  furnMesh.receiveShadow = true;
+  const groups = new Map<string, { geo: THREE.BufferGeometry; items: number[] }>();
   const furnBoxes: CutBox[] = [];
+  const furnPlace: { x: number; z: number; face: number; group: string; slot: number }[] = [];
   furn.forEach((f, i) => {
-    let { x, z, w, d } = f;
-    if (isEmbedded(f)) {
-      const nx = Math.round(Math.sin(f.face));
-      const nz = Math.round(Math.cos(f.face));
-      x += nx * 0.3;
-      z += nz * 0.3;
-      if (nx !== 0) w = 0.12;
-      else d = 0.12;
+    const side = Math.abs(Math.sin(f.face)) > 0.5;
+    const localW = side ? f.d : f.w;
+    const localD = side ? f.w : f.d;
+    const variant: PropVariant = f.tags.includes('goal') ? 'goal' : f.tags.includes('hide') ? 'hide' : 'plain';
+    const key = `${f.kind}|${localW.toFixed(2)}|${localD.toFixed(2)}|${f.h.toFixed(2)}|${variant}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = { geo: furnitureGeometry(f.kind, localW, localD, f.h, variant), items: [] };
+      groups.set(key, g);
     }
-    furnBoxes.push({ x0: x - w / 2, z0: z - d / 2, x1: x + w / 2, z1: z + d / 2, full: f.h, h: f.h });
-    let hex = FURN_COLOR[f.kind];
-    if (f.tags.includes('goal')) hex = PAL.goal;
-    else if (f.kind === 'locker' && f.tags.includes('hide')) hex = PAL.lockerDark;
-    furnMesh.setColorAt(i, c3.setHex(hex));
+    let { x, z } = f;
+    if (isEmbedded(f)) {
+      x += Math.round(Math.sin(f.face)) * 0.04;
+      z += Math.round(Math.cos(f.face)) * 0.04;
+    }
+    furnPlace.push({ x, z, face: f.face, group: key, slot: g.items.length });
+    g.items.push(i);
+    furnBoxes.push({ x0: x - f.w / 2, z0: z - f.d / 2, x1: x + f.w / 2, z1: z + f.d / 2, full: f.h, h: f.h });
   });
-  if (furn.length === 0) furnMesh.count = 0;
-  root.add(furnMesh);
-  const furnInk = new THREE.InstancedMesh(boxGeo, inkMat, Math.max(1, furn.length));
-  if (furn.length === 0) furnInk.count = 0;
-  root.add(furnInk);
+  const furnMeshes = new Map<string, THREE.InstancedMesh>();
+  for (const [key, g] of groups) {
+    const mesh = new THREE.InstancedMesh(g.geo, modelMaterial(), g.items.length);
+    mesh.castShadow = opts.shadows;
+    mesh.receiveShadow = true;
+    furnMeshes.set(key, mesh);
+    root.add(mesh);
+  }
+  const q = new THREE.Quaternion();
+  const yAxis = new THREE.Vector3(0, 1, 0);
+  const vPos = new THREE.Vector3();
+  const vScale = new THREE.Vector3();
+  const mf = new THREE.Matrix4();
+  /** Write one furniture instance; `squash` < 1 lowers it with the wall cut. */
+  const writeFurn = (i: number, squash: number): void => {
+    const p = furnPlace[i]!;
+    q.setFromAxisAngle(yAxis, p.face);
+    mf.compose(vPos.set(p.x, 0, p.z), q, vScale.set(1, Math.max(0.02, squash), 1));
+    furnMeshes.get(p.group)!.setMatrixAt(p.slot, mf);
+  };
+  furn.forEach((_, i) => writeFurn(i, 1));
+  for (const mesh of furnMeshes.values()) {
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingSphere();
+  }
+
+  // Dressing (doors, windows, boards, signs…): floor items always shown; wall items hide while their wall is down.
+  const dressing = buildDressing(plan);
+  root.add(dressing.root);
+  for (const w of dressing.wallItems) root.add(w.object);
 
   const m4 = new THREE.Matrix4();
   /** Box + its ink hull (same box grown by INK on every side, drawn back faces only). */
@@ -291,15 +306,21 @@ export function buildSchoolView(plan: SchoolPlan, opts: { shadows: boolean }): S
     ink.setMatrixAt(i, m4);
   };
   cut.forEach((b, i) => writeBox(walls, wallInk, i, b));
-  furnBoxes.forEach((b, i) => writeBox(furnMesh, furnInk, i, b));
   walls.instanceMatrix.needsUpdate = true;
   wallInk.instanceMatrix.needsUpdate = true;
-  furnMesh.instanceMatrix.needsUpdate = true;
-  furnInk.instanceMatrix.needsUpdate = true;
   walls.computeBoundingSphere();
   wallInk.computeBoundingSphere();
-  furnMesh.computeBoundingSphere();
-  furnInk.computeBoundingSphere();
+
+  // Which wall box covers each fine cell (wall items look up their wall's current height).
+  const wallAt = new Int32Array(plan.fine.cols * plan.fine.rows).fill(-1);
+  rects.forEach((r, i) => {
+    for (let rr = r.r0; rr < r.r1; rr++) for (let cc = r.c0; cc < r.c1; cc++) wallAt[rr * plan.fine.cols + cc] = i;
+  });
+  const wallIdx = dressing.wallItems.map((w) => {
+    const c = Math.floor(w.wallX / FINE);
+    const r = Math.floor(w.wallZ / FINE);
+    return c >= 0 && r >= 0 && c < plan.fine.cols && r < plan.fine.rows ? wallAt[r * plan.fine.cols + c]! : -1;
+  });
 
   // ── markers: goals (blue beam + ring), checkpoints (mint ring), your desk (white ring) ──
   const markers = new Map<string, THREE.Object3D>();
@@ -331,7 +352,7 @@ export function buildSchoolView(plan: SchoolPlan, opts: { shadows: boolean }): S
   let cutTimer = 0;
   return {
     root,
-    stats: { wallBoxes: rects.length + slabs.length, furniture: furn.length },
+    stats: { wallBoxes: rects.length + slabs.length, furniture: furn.length, furnitureMeshes: furnMeshes.size, dressingMeshes: dressing.stats.meshes },
     update(dt, fx, fz, mode, view) {
       cutTimer += dt;
       const target = (b: CutBox): number => {
@@ -364,12 +385,14 @@ export function buildSchoolView(plan: SchoolPlan, opts: { shadows: boolean }): S
         const t = target(b);
         if (Math.abs(b.h - t) < 0.004) continue;
         b.h = Math.abs(b.h - t) < 0.01 ? t : damp(b.h, t, 10, dt);
-        writeBox(furnMesh, furnInk, i, b);
+        writeFurn(i, b.h / b.full);
         fdirty = true;
       }
-      if (fdirty) {
-        furnMesh.instanceMatrix.needsUpdate = true;
-        furnInk.instanceMatrix.needsUpdate = true;
+      if (fdirty) for (const mesh of furnMeshes.values()) mesh.instanceMatrix.needsUpdate = true;
+      for (let k = 0; k < dressing.wallItems.length; k++) {
+        const idx = wallIdx[k]!;
+        const item = dressing.wallItems[k]!;
+        item.object.visible = idx < 0 || cut[idx]!.h >= item.top - 0.05;
       }
       // Goal beams pulse gently.
       const pulse = 0.9 + 0.1 * Math.sin(cutTimer * 3);
@@ -386,8 +409,8 @@ export function buildSchoolView(plan: SchoolPlan, opts: { shadows: boolean }): S
       for (const d of disposables) d.dispose();
       walls.dispose();
       wallInk.dispose();
-      furnMesh.dispose();
-      furnInk.dispose();
+      for (const mesh of furnMeshes.values()) mesh.dispose();
+      dressing.dispose();
       root.removeFromParent();
     },
   };

@@ -1,17 +1,19 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Grey-box people + vision cones (milestone M1). Capsules for the student and
-// staff (people/ replaces them in M5), a security-camera box for sweepers, and
-// one floor decal per staff member drawn from sim/detect.visibilityPolygon — the
-// same rays the sim tests, so what you see is what can see you.
-// Reads SimState only; interpolates between the previous and current tick.
+// People + vision cones in the world (integration). The student, staff and
+// security cameras, driven from SimState every frame: position and facing
+// (interpolated between ticks), locomotion speed and gait, head look, one-shot
+// actions and faces on sim events. Characters come from src/people; cameras are a
+// box on a bracket. Each staff member with sight gets a floor decal drawn from
+// sim/detect.visibilityPolygon — the same rays the sim tests.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { lerp } from '../core/math';
+import { createPerson, type Person, type PersonRole } from '../people';
 import { PAL } from '../render/palette';
 import { toon } from '../render/toon';
-import type { Archetype, SchoolPlan } from '../school/types';
+import type { SchoolPlan } from '../school/types';
 import { visibilityPolygon } from '../sim/detect';
-import type { SimState, SuspicionLevel } from '../sim/types';
+import type { SimEvent, SimState, SuspicionLevel } from '../sim/types';
 import type { ViewPoints } from './school';
 
 const RAYS = 28;
@@ -38,22 +40,15 @@ export function takeSnapshot(state: SimState, out?: Snapshot): Snapshot {
   return snap;
 }
 
-function lerpAngle(a: number, b: number, t: number): number {
-  let d = b - a;
-  while (d > Math.PI) d -= 2 * Math.PI;
-  while (d < -Math.PI) d += 2 * Math.PI;
-  return a + d * t;
+function wrap(a: number): number {
+  while (a > Math.PI) a -= 2 * Math.PI;
+  while (a < -Math.PI) a += 2 * Math.PI;
+  return a;
 }
 
-const BODY: Record<Archetype, number> = {
-  patroller: PAL.patroller,
-  sentry: PAL.sentry,
-  investigator: PAL.investigator,
-  sweeper: PAL.sweeper,
-  wanderer: PAL.wanderer,
-  snitch: PAL.snitch,
-  listener: PAL.listener,
-};
+function lerpAngle(a: number, b: number, t: number): number {
+  return a + wrap(b - a) * t;
+}
 
 const CONE_COLOR: Record<SuspicionLevel, number> = {
   calm: PAL.cone,
@@ -70,85 +65,89 @@ export interface ActorsView {
   headOf(i: number, out: THREE.Vector3): THREE.Vector3;
   /** Points the occlusion pass keeps visible: the student, then staff within `radius` m of the student. */
   viewPoints(out: ViewPoints, radius: number): void;
-  update(prev: Snapshot, state: SimState, alpha: number, showCones: boolean): void;
+  /** React to sim events (actions and faces). */
+  onEvents(events: readonly SimEvent[], state: SimState): void;
+  update(prev: Snapshot, state: SimState, alpha: number, showCones: boolean, dt: number): void;
   dispose(): void;
+}
+
+interface StaffView {
+  g: THREE.Group;
+  person: Person | null;
+  /** Security-camera head (sweepers). */
+  cam: THREE.Object3D | null;
+  cone: THREE.Mesh | null;
+  coneGeo: THREE.BufferGeometry | null;
+  coneMat: THREE.MeshBasicMaterial | null;
+  lastX: number;
+  lastZ: number;
+  wasMoving: boolean;
+  level: SuspicionLevel;
 }
 
 export function buildActors(plan: SchoolPlan, opts: { shadows: boolean }): ActorsView {
   const root = new THREE.Group();
   root.name = 'actors';
   const disposables: { dispose(): void }[] = [];
-  // Stand-in figures: a body capsule, a head, an eye band showing where they look, an ink hull on each (back faces
-  // of a slightly bigger copy) and a soft blob shadow. Real characters arrive in M5.
-  const bodyGeo = new THREE.CapsuleGeometry(0.28, 0.75, 4, 12);
-  bodyGeo.translate(0, 0.66, 0);
-  const headGeo = new THREE.SphereGeometry(0.24, 16, 12);
-  headGeo.translate(0, 1.48, 0);
-  const inkBody = new THREE.CapsuleGeometry(0.31, 0.75, 4, 12);
-  inkBody.translate(0, 0.66, 0);
-  const inkHead = new THREE.SphereGeometry(0.27, 16, 12);
-  inkHead.translate(0, 1.48, 0);
-  const eyes = new THREE.BoxGeometry(0.3, 0.07, 0.08);
-  eyes.translate(0, 1.52, 0.2);
-  const camBox = new THREE.BoxGeometry(0.34, 0.26, 0.5);
-  camBox.translate(0, 0, 0.12);
-  const inkCam = new THREE.BoxGeometry(0.42, 0.34, 0.58);
-  inkCam.translate(0, 0, 0.12);
+  const castAll = (o: THREE.Object3D): void => {
+    o.traverse((m) => {
+      if ((m as THREE.Mesh).isMesh) m.castShadow = opts.shadows;
+    });
+  };
+
   const ring = new THREE.RingGeometry(0.42, 0.55, 32);
   ring.rotateX(-Math.PI / 2);
   const blob = new THREE.CircleGeometry(0.5, 20);
   blob.rotateX(-Math.PI / 2);
-  disposables.push(bodyGeo, headGeo, inkBody, inkHead, eyes, camBox, inkCam, ring, blob);
+  const camBox = new THREE.BoxGeometry(0.34, 0.26, 0.5);
+  camBox.translate(0, 0, 0.12);
+  const inkCam = new THREE.BoxGeometry(0.42, 0.34, 0.58);
+  inkCam.translate(0, 0, 0.12);
+  const bracket = new THREE.BoxGeometry(0.08, 0.3, 0.08);
+  bracket.translate(0, 0.15, -0.05);
+  disposables.push(ring, blob, camBox, inkCam, bracket);
   const inkMat = new THREE.MeshBasicMaterial({ color: PAL.outline, side: THREE.BackSide });
-  const blobMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.28, depthWrite: false });
-  disposables.push(inkMat, blobMat);
-  const SKIN = [0xe8b48a, 0xc68c5e, 0x8d5a3b, 0xf1c8a4, 0xa86f4c];
-
-  const figure = (body: number, skin: number): { g: THREE.Group; body: THREE.Mesh; look: THREE.Group } => {
-    const g = new THREE.Group();
-    const b = new THREE.Mesh(bodyGeo, toon(body));
-    b.castShadow = opts.shadows;
-    const look = new THREE.Group();
-    const head = new THREE.Mesh(headGeo, toon(skin));
-    head.castShadow = opts.shadows;
-    look.add(head, new THREE.Mesh(inkHead, inkMat), new THREE.Mesh(eyes, toon(0x15171d)));
-    const shadow = new THREE.Mesh(blob, blobMat);
-    shadow.position.y = 0.02;
-    shadow.renderOrder = 1;
-    g.add(shadow, b, new THREE.Mesh(inkBody, inkMat), look);
-    return { g, body: b, look };
+  const blobMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.26, depthWrite: false });
+  const ringMat = new THREE.MeshBasicMaterial({ color: PAL.studentRing, transparent: true, opacity: 0.85, depthWrite: false });
+  disposables.push(inkMat, blobMat, ringMat);
+  const shadowBlob = (g: THREE.Group, r = 1): void => {
+    const s = new THREE.Mesh(blob, blobMat);
+    s.position.y = 0.02;
+    s.scale.setScalar(r);
+    s.renderOrder = 1;
+    g.add(s);
   };
 
   // Student.
-  const me = figure(PAL.student, SKIN[0]!);
-  const student = me.g;
-  const sBody = me.body;
-  const sVisor = me.look;
-  const ringMat = new THREE.MeshBasicMaterial({ color: PAL.studentRing, transparent: true, opacity: 0.85, depthWrite: false });
-  disposables.push(ringMat);
+  const student = new THREE.Group();
+  const me = createPerson({ role: 'student', seed: plan.seed ^ 0x51ed });
+  castAll(me.root);
+  shadowBlob(student);
   const sRing = new THREE.Mesh(ring, ringMat);
   sRing.position.y = 0.04;
-  student.add(sRing);
+  student.add(me.root, sRing);
   root.add(student);
+  let sLastX = NaN;
+  let sLastZ = NaN;
 
   // Staff + cones.
-  const staff: { g: THREE.Group; head: THREE.Object3D; cone: THREE.Mesh | null; coneGeo: THREE.BufferGeometry | null; coneMat: THREE.MeshBasicMaterial | null }[] = [];
+  const staff: StaffView[] = [];
   const poly = new Float32Array(2 + 2 * (RAYS + 1));
   plan.staff.forEach((sp, idx) => {
-    let g: THREE.Group;
-    let head: THREE.Object3D;
+    const g = new THREE.Group();
+    let person: Person | null = null;
+    let cam: THREE.Object3D | null = null;
     if (sp.archetype === 'sweeper') {
-      g = new THREE.Group();
-      head = new THREE.Group();
-      const cam = new THREE.Mesh(camBox, toon(PAL.sweeper));
-      cam.castShadow = opts.shadows;
-      head.add(cam, new THREE.Mesh(inkCam, inkMat));
-      head.position.y = sp.eye;
-      g.add(head);
+      cam = new THREE.Group();
+      cam.add(new THREE.Mesh(camBox, toon(PAL.sweeper)), new THREE.Mesh(inkCam, inkMat), new THREE.Mesh(bracket, toon(PAL.metal)));
+      cam.position.y = sp.eye;
+      castAll(cam);
+      g.add(cam);
     } else {
-      const f = figure(BODY[sp.archetype], SKIN[(idx + 1) % SKIN.length]!);
-      g = f.g;
-      head = f.look;
+      person = createPerson({ role: sp.archetype as PersonRole, seed: (plan.seed * 31 + idx * 977) >>> 0 });
+      castAll(person.root);
+      shadowBlob(g, sp.archetype === 'wanderer' ? 1.5 : 1);
+      g.add(person.root);
     }
     let cone: THREE.Mesh | null = null;
     let coneGeo: THREE.BufferGeometry | null = null;
@@ -157,9 +156,9 @@ export function buildActors(plan: SchoolPlan, opts: { shadows: boolean }): Actor
       coneGeo = new THREE.BufferGeometry();
       const n = RAYS + 2;
       coneGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
-      const idx3: number[] = [];
-      for (let k = 1; k <= RAYS; k++) idx3.push(0, k + 1, k);
-      coneGeo.setIndex(idx3);
+      const index: number[] = [];
+      for (let k = 1; k <= RAYS; k++) index.push(0, k + 1, k);
+      coneGeo.setIndex(index);
       coneMat = new THREE.MeshBasicMaterial({ color: PAL.cone, transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide });
       cone = new THREE.Mesh(coneGeo, coneMat);
       cone.frustumCulled = false;
@@ -168,7 +167,7 @@ export function buildActors(plan: SchoolPlan, opts: { shadows: boolean }): Actor
       disposables.push(coneGeo, coneMat);
     }
     root.add(g);
-    staff.push({ g, head, cone, coneGeo, coneMat });
+    staff.push({ g, person, cam, cone, coneGeo, coneMat, lastX: NaN, lastZ: NaN, wasMoving: false, level: 'calm' });
   });
 
   const focus = new THREE.Vector3();
@@ -178,7 +177,8 @@ export function buildActors(plan: SchoolPlan, opts: { shadows: boolean }): Actor
     focus,
     headOf(i, out) {
       const s = staff[i]!;
-      return out.set(s.g.position.x, (plan.staff[i]!.archetype === 'sweeper' ? plan.staff[i]!.eye : 1.9) + 0.45, s.g.position.z);
+      const top = s.person ? s.person.height : plan.staff[i]!.eye;
+      return out.set(s.g.position.x, top + 0.45, s.g.position.z);
     },
     viewPoints(out, radius) {
       const max = out.points.length / 3;
@@ -198,15 +198,61 @@ export function buildActors(plan: SchoolPlan, opts: { shadows: boolean }): Actor
       }
       out.count = n;
     },
-    update(prev, state, alpha, showCones) {
+    onEvents(events, state) {
+      for (const e of events) {
+        switch (e.t) {
+          case 'pickup':
+            me.play('grab');
+            me.setExpression('smug', 1.5);
+            break;
+          case 'caught': {
+            const s = staff[e.staff];
+            if (s?.person) {
+              s.person.play(plan.staff[e.staff]!.archetype === 'patroller' ? 'whistle' : 'point');
+              s.person.setExpression(e.passUsed ? 'neutral' : 'stern', 2);
+            }
+            if (!e.passUsed) {
+              me.play('busted');
+              me.setExpression('panicked', 2);
+            } else me.setExpression('relieved', 1.5);
+            break;
+          }
+          case 'suspicion': {
+            const s = staff[e.staff];
+            if (!s?.person) break;
+            if (e.level === 'curious' && s.level === 'calm') s.person.setExpression('suspicious', 2);
+            if (e.level === 'searching') s.person.play('lookAround');
+            s.level = e.level;
+            break;
+          }
+          case 'closeCall':
+            me.play('flinch');
+            me.setExpression('nervous', 1.2);
+            break;
+          case 'end':
+            if (e.phase === 'success') {
+              me.play('celebrate');
+              me.setExpression('happy');
+            } else me.setExpression('nervous');
+            break;
+        }
+      }
+      void state;
+    },
+    update(prev, state, alpha, showCones, dt) {
       frame++;
       const st = state.student;
       const x = lerp(prev.sx, st.x, alpha);
       const z = lerp(prev.sz, st.z, alpha);
       student.position.set(x, 0, z);
       student.rotation.y = lerpAngle(prev.syaw, st.yaw, alpha);
-      sBody.scale.y = st.posture === 'sneak' ? 0.72 : 1;
-      sVisor.position.y = st.posture === 'sneak' ? -0.46 : 0;
+      if (dt > 0) {
+        const sp = Number.isNaN(sLastX) ? 0 : Math.hypot(x - sLastX, z - sLastZ) / dt;
+        me.setMotion(Math.min(sp, 8), st.posture);
+      }
+      sLastX = x;
+      sLastZ = z;
+      me.update(dt);
       student.visible = st.escort === 0 || frame % 8 < 4;
       focus.set(x, 0, z);
       const rebuild = frame % 2 === 0;
@@ -214,12 +260,23 @@ export function buildActors(plan: SchoolPlan, opts: { shadows: boolean }): Actor
         const a = staff[i]!;
         const px = lerp(prev.staff[i * 4]!, s.x, alpha);
         const pz = lerp(prev.staff[i * 4 + 1]!, s.z, alpha);
+        const yaw = lerpAngle(prev.staff[i * 4 + 2]!, s.yaw, alpha);
         const look = lerpAngle(prev.staff[i * 4 + 3]!, s.look, alpha);
         a.g.position.set(px, 0, pz);
-        if (plan.staff[i]!.archetype === 'sweeper') a.head.rotation.y = look;
-        else {
-          a.g.rotation.y = lerpAngle(prev.staff[i * 4 + 2]!, s.yaw, alpha);
-          a.head.rotation.y = look - a.g.rotation.y;
+        if (a.cam) a.cam.rotation.y = look;
+        if (a.person) {
+          a.g.rotation.y = yaw;
+          a.person.setLook(wrap(look - yaw));
+          if (dt > 0) {
+            const spd = Number.isNaN(a.lastX) ? 0 : Math.hypot(px - a.lastX, pz - a.lastZ) / dt;
+            a.person.setMotion(Math.min(spd, 6), 'walk');
+            // Patrollers check their watch when they stop at the end of a beat.
+            if (a.wasMoving && !s.moving && plan.staff[i]!.archetype === 'patroller' && s.level === 'calm') a.person.play('checkWatch');
+          }
+          a.wasMoving = s.moving;
+          a.lastX = px;
+          a.lastZ = pz;
+          a.person.update(dt);
         }
         if (!a.cone || !a.coneGeo || !a.coneMat) return;
         a.cone.visible = showCones;
@@ -238,6 +295,8 @@ export function buildActors(plan: SchoolPlan, opts: { shadows: boolean }): Actor
       });
     },
     dispose() {
+      me.dispose();
+      for (const s of staff) s.person?.dispose();
       for (const d of disposables) d.dispose();
       root.removeFromParent();
     },

@@ -179,7 +179,7 @@ export class App {
       if (steps === MAX_STEPS) this.acc = 0; // slow device: run slower, never diverge
     }
     const alpha = this.paused || this.ended ? 1 : clamp(this.acc / SIM_DT, 0, 1);
-    this.actors!.update(this.prev, this.sim, alpha, this.camera.cones);
+    this.actors!.update(this.prev, this.sim, alpha, this.camera.cones, this.paused || this.ended ? 0 : dt);
     const f = this.actors!.focus;
     this.placeCamera(false, dt);
     const camPos = this.renderer.rig.camera.position;
@@ -217,6 +217,7 @@ export class App {
 
   private onEvents(ev: SimEvent[]): void {
     this.lastEvents = ev;
+    this.actors?.onEvents(ev, this.sim);
     for (const e of ev) {
       if (e.t === 'pickup') this.view?.setGoalDone(e.anchor, true);
       if (e.t === 'caught') {
