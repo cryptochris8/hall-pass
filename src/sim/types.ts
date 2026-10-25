@@ -9,7 +9,7 @@
 import type { AnchorId, Archetype, Difficulty, MissionId, PaEventId, SchoolPlan, TierId } from '../school/types';
 
 /** Bump whenever a change alters run outcomes (recordings and challenge codes carry it). */
-export const SIM_VERSION = 2;
+export const SIM_VERSION = 3;
 export const SIM_HZ = 60;
 export const SIM_DT = 1 / SIM_HZ;
 
@@ -75,6 +75,10 @@ export interface StudentState {
   hideT: number;
   /** Throwables carried (0–3). */
   carry: number;
+  /** VENDING RUN: ticks left of the (loud) purchase; 0 = not buying. Input other than a cancel is ignored. */
+  buying: number;
+  /** Ticks the student can't move (shooed away from the PIZZA DAY counter). */
+  frozen: number;
 }
 
 export interface StaffState {
@@ -123,6 +127,8 @@ export interface StaffState {
   reportTo: number;
   /** Errand: ticks to wait once there. */
   errandTicks: number;
+  /** Times this staff member has spotted you (PRINCIPAL'S OFFICE: Hargrove walks faster each time). */
+  heat: number;
 }
 
 export interface Thrown {
@@ -132,6 +138,25 @@ export interface Thrown {
   toZ: number;
   /** Ticks until it lands. */
   t: number;
+}
+
+/** Counters the Hall Report reads (score lines and remarks). Never read by the sim's own rules. */
+export interface RunStats {
+  /** Ticks spent hidden, and the longest single stay (with the hide-spot kind). */
+  hiddenTicks: number;
+  longestHide: number;
+  longestHideKind: string;
+  cameraAlerts: number;
+  throws: number;
+  /** Throws whose landing pulled someone who was onto you (or near you) off to investigate. */
+  distractions: number;
+  sprintTicks: number;
+  shoos: number;
+  buysCancelled: number;
+  /** PIZZA DAY: true = first in line, false = got there too late, null = not a pizza run / not yet. */
+  firstInLine: boolean | null;
+  /** Snacks picked up. */
+  snacks: number;
 }
 
 export type RunPhase = 'playing' | 'success' | 'detention' | 'timeout';
@@ -164,6 +189,9 @@ export interface SimState {
   paNext: number;
   /** Times a chase ended with you getting away. */
   escapes: number;
+  /** Snack packs collected (1 per plan.snacks index). */
+  snacksTaken: Uint8Array;
+  stats: RunStats;
 }
 
 export type SimEvent =
@@ -184,4 +212,8 @@ export type SimEvent =
   | { t: 'cameraAlert'; camera: number; to: number }
   | { t: 'pa'; id: PaEventId }
   | { t: 'found'; staff: number }
+  | { t: 'snack'; index: number }
+  | { t: 'buy'; on: boolean; done: boolean }
+  | { t: 'lunchBell' }
+  | { t: 'shoo' }
   | { t: 'end'; phase: Exclude<RunPhase, 'playing'> };

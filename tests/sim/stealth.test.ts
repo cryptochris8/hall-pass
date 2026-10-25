@@ -131,15 +131,28 @@ describe('hiding', () => {
 
 describe('distractions and noise', () => {
   it('a thrown eraser lands with a noise that sends a nearby patroller to look', () => {
-    const s = sim(2, 3);
-    const i = find(s, 'patroller');
+    // Stand 5–6 m behind a patroller (out of its cone) facing it, and throw past it (first seed with open floor there).
+    let s!: SimState;
+    let i = -1;
+    let bx = 0;
+    let bz = 0;
+    for (let seed = 3; seed < 20 && i < 0; seed++) {
+      s = sim(2, seed);
+      const k = find(s, 'patroller');
+      const st0 = s.staff[k]!;
+      for (const d of [6, 5.5, 5]) {
+        const x = st0.x - fsin(st0.look) * d;
+        const z = st0.z - fcos(st0.look) * d;
+        if (open(s.plan, x, z) && lineOfSight(s.plan.fine, st0.x, st0.z, x, z, true)) {
+          [i, bx, bz] = [k, x, z];
+          break;
+        }
+      }
+    }
+    expect(i).toBeGreaterThanOrEqual(0);
     isolate(s, i);
     const st = s.staff[i]!;
     st.dwell = 1 << 20;
-    // Stand 6 m behind the patroller (out of its cone) facing it, and throw past it.
-    const bx = st.x - fsin(st.look) * 6;
-    const bz = st.z - fcos(st.look) * 6;
-    expect(open(s.plan, bx, bz)).toBe(true);
     s.student.x = bx;
     s.student.z = bz;
     s.student.yaw = st.look;

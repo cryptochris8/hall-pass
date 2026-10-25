@@ -1,7 +1,8 @@
 // HALL PASS — bootstrap. Everything interesting lives in src/game/app.ts.
 //
 // URL params (docs/ARCHITECTURE.md §14): ?seed=N, ?tier=1..5, ?mission=phone|vending|pizza|locker|gym|principal,
-//   ?difficulty=freshman|junior|senior, ?quality=auto|high|low, ?test=1 (window.__HP__ in production builds),
+//   ?difficulty=freshman|junior|senior, ?autostart=1 (skip the title and mission card), ?quality=auto|high|low,
+//   ?test=1 (window.__HP__ in production builds),
 //   grey-box camera: ?pitch=55&dist=17&fov=40&walls=occlude|cutaway|low|full&cones=0|1.
 import { App, type AppParams } from './game/app';
 import { installDebugHooks } from './game/debug';
@@ -39,6 +40,7 @@ function parseParams(search: string): AppParams {
     quality: quality === 'high' || quality === 'low' || quality === 'auto' ? (quality as Quality) : null,
     camera,
     debug: import.meta.env.DEV || q.has('test') || q.has('debug'),
+    autostart: q.get('autostart') === '1',
   };
 }
 

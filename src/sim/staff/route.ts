@@ -40,6 +40,7 @@ export function initStaff(spawn: StaffSpawn): StaffState {
     sawHide: -1,
     reportTo: -1,
     errandTicks: 0,
+    heat: 0,
   };
 }
 

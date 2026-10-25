@@ -125,3 +125,44 @@ export function buildStealthFx(): StealthFx {
     },
   };
 }
+
+/** Gummy-bear snack packs (GDD §7 optional pickups): small bright bags that bob and spin until picked up. */
+export interface SnackView {
+  readonly root: THREE.Group;
+  take(index: number): void;
+  update(dt: number): void;
+  dispose(): void;
+}
+
+export function buildSnacks(spots: readonly { x: number; z: number }[]): SnackView {
+  const root = new THREE.Group();
+  root.name = 'snacks';
+  const geo = new THREE.BoxGeometry(0.26, 0.32, 0.08);
+  const mats = [toon(0xff5fa2), toon(0xffb23e), toon(0x6fd3a8)];
+  const bags = spots.map((p, i) => {
+    const m = new THREE.Mesh(geo, mats[i % mats.length]!);
+    m.position.set(p.x, 0.55, p.z);
+    m.castShadow = true;
+    root.add(m);
+    return m;
+  });
+  let t = 0;
+  return {
+    root,
+    take(i) {
+      const b = bags[i];
+      if (b) b.visible = false;
+    },
+    update(dt) {
+      t += dt;
+      bags.forEach((b, i) => {
+        b.position.y = 0.55 + 0.08 * Math.sin(t * 2.4 + i * 1.7);
+        b.rotation.y = t * 1.6 + i;
+      });
+    },
+    dispose() {
+      geo.dispose(); // toon() materials are shared (cached): never disposed here
+      root.removeFromParent();
+    },
+  };
+}

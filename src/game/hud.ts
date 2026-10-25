@@ -1,13 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Grey-box HUD + tuning panel (milestone M1). The real UI module (src/ui, M4)
-// replaces this. The panel exists for the phone test (docs/GDD.md open question
-// 1): change seed / tier / mission / difficulty and the camera (pitch, distance,
-// FOV, wall mode, cones) live on the device and read the numbers back.
-// All text via textContent; buttons are real <button>s.
+// In-run HUD: bell timer, mission line, prompts, state badges, ?/! markers and
+// flash banners, plus the pause button. With ?debug / ?test the gear opens the
+// tuning panel (seed / tier / mission / difficulty, camera numbers) for device
+// tests. Menus live in src/ui. All text via textContent; buttons are <button>s.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Difficulty, MissionId, TierId } from '../school/types';
 import { DIFFICULTIES, MISSION_IDS } from '../school/types';
 import type { SuspicionLevel } from '../sim/types';
+import { MISSION_NAME } from '../ui/text';
 import type { WallMode } from '../world/school';
 
 export interface CameraSettings {
@@ -22,6 +22,8 @@ export interface HudActions {
   newRun(change: { seed?: number; tier?: TierId; mission?: MissionId; difficulty?: Difficulty }): void;
   camera(change: Partial<CameraSettings>): void;
   pause(on: boolean): void;
+  /** The pause button (opens the pause menu). */
+  menu(): void;
 }
 
 export interface HudModel {
@@ -41,16 +43,9 @@ export interface HudModel {
   carry: number;
   hidden: boolean;
   chased: boolean;
+  /** Extra badge (lunch bell countdown, purchase progress, snacks). */
+  badge: string | null;
 }
-
-const MISSION_NAME: Record<MissionId, string> = {
-  phone: 'PHONE JAIL',
-  vending: 'VENDING RUN',
-  pizza: 'PIZZA DAY',
-  locker: 'LOCKER DROP',
-  gym: 'GYM BAG',
-  principal: "PRINCIPAL'S OFFICE",
-};
 
 export function missionName(m: MissionId): string {
   return MISSION_NAME[m];
@@ -94,6 +89,8 @@ const CSS = `
 .hp-state span { background: rgba(29,36,51,.8); padding: 3px 8px; border-radius: 8px; font-size: 12px; font-weight: 700; }
 .hp-state .hp-chase { background: #c8372d; }
 .hp-state .hp-hidden { background: #2e6b52; }
+.hp-state .hp-badge { background: #2e8bff; }
+.hp-pausebtn { font-size: 16px !important; font-weight: 900 !important; letter-spacing: .05em; }
 @media (pointer: coarse) { .hp-prompt { bottom: auto; top: calc(max(10px, env(safe-area-inset-top)) + 56px); } }
 .hp-hint { position: absolute; left: 50%; bottom: max(10px, env(safe-area-inset-bottom)); transform: translateX(-50%);
   background: rgba(29,36,51,.6); padding: 4px 10px; border-radius: 8px; font-weight: 500; font-size: 12px; white-space: nowrap; }
@@ -132,7 +129,7 @@ export class Hud {
   private stateKey = '';
   private model: HudModel | null = null;
 
-  constructor(app: HTMLElement, private readonly actions: HudActions) {
+  constructor(app: HTMLElement, private readonly actions: HudActions, debug = false) {
     const style = document.createElement('style');
     style.textContent = CSS;
     document.head.appendChild(style);
@@ -142,8 +139,12 @@ export class Hud {
     this.mission = el('div', 'hp-mission', top);
     this.missionSub = document.createElement('small');
     el('div', 'hp-spacer', top);
+    const pause = el('button', 'hp-pausebtn', top, 'II');
+    pause.setAttribute('aria-label', 'Pause');
+    pause.addEventListener('click', () => this.actions.menu());
     const gear = el('button', 'hp-gear', top, '⚙');
     gear.setAttribute('aria-label', 'Tuning panel');
+    gear.hidden = !debug;
     this.panel = el('div', 'hp-panel', this.root);
     this.panel.hidden = true;
     gear.addEventListener('click', () => this.togglePanel());
@@ -155,7 +156,7 @@ export class Hud {
     this.prompt = el('div', 'hp-prompt', this.root);
     this.prompt.hidden = true;
     this.state = el('div', 'hp-state', this.root);
-    el('div', 'hp-hint', this.root, 'WASD move · hold C sneak · hold Shift sprint · Space grab / hide · E throw · Esc tuning');
+    el('div', 'hp-hint', this.root, 'WASD move · hold C sneak · hold Shift sprint · Space grab / hide · E throw · Esc pause');
   }
 
   get panelOpen(): boolean {
@@ -224,13 +225,14 @@ export class Hud {
     this.mission.appendChild(this.missionSub);
     this.prompt.hidden = model.prompt === null;
     if (model.prompt !== null && this.prompt.textContent !== model.prompt) this.prompt.textContent = model.prompt;
-    const key = `${model.carry}|${model.hidden}|${model.chased}`;
+    const key = `${model.carry}|${model.hidden}|${model.chased}|${model.badge}`;
     if (key !== this.stateKey) {
       this.stateKey = key;
       this.state.textContent = '';
       if (model.chased) el('span', 'hp-chase', this.state, 'CHASED! Break line of sight');
       if (model.hidden) el('span', 'hp-hidden', this.state, 'HIDDEN');
       if (model.carry > 0) el('span', '', this.state, `Erasers ×${model.carry} (E to throw)`);
+      if (model.badge) el('span', 'hp-badge', this.state, model.badge);
     }
     if (!this.panel.hidden) {
       this.vals.get('seed')!.textContent = String(model.seed);

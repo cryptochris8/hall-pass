@@ -16,7 +16,7 @@ import { createSim, step, NO_INPUT } from '../sim';
 import { fcos, fsin } from '../core/fmath';
 import { inZone } from '../sim/detect';
 import { canStep, openAt } from '../sim/nav';
-import { NOISE } from '../sim/tuning';
+import { MISSION_RULES, NOISE, hearingOf, lunchTick } from '../sim/tuning';
 import { FINE, F_LOW, F_SOLID, type AnchorId, type Difficulty, type RoutePoint, type SchoolPlan } from './types';
 
 /** Rays per cone fan when marking sight (≈ 1.5° apart for a 50° cone: < 0.3 m apart at 10 m). */
@@ -45,7 +45,7 @@ const GOALS: readonly AnchorId[] = ['goal', 'goal2', 'goal3'];
 export function validatePlan(
   plan: SchoolPlan,
   difficulty: Difficulty,
-  opts: { maxExpand?: number; probe?: (blocked: (t: number, x: number, z: number) => boolean, raw: (t: number, x: number, z: number) => boolean) => void } = {},
+  opts: { maxExpand?: number; clearance?: Difficulty; probe?: (blocked: (t: number, x: number, z: number) => boolean, raw: (t: number, x: number, z: number) => boolean) => void } = {},
 ): ValidateResult {
   const { cols, rows, flags } = plan.fine;
   const N = cols * rows;
@@ -90,6 +90,10 @@ export function validatePlan(
   const prevLook = new Float64Array(plan.staff.length);
   const lookLo = new Float64Array(plan.staff.length);
   const lookHi = new Float64Array(plan.staff.length);
+  // VENDING RUN: steps when someone would hear the machine from the goal (the purchase rattles once a second).
+  const vending = plan.mission === 'vending';
+  const goalA = plan.anchors.goal!;
+  const vendBad = new Uint8Array(T);
   const quiet = plan.zones.some((z) => z.kind === 'quiet');
   const polished = plan.zones.some((z) => z.kind === 'polished');
   for (let t = 0; t < T; t++) {
@@ -137,7 +141,11 @@ export function validatePlan(
       }
       prevLook[k] = st.look;
       // Footsteps: walking within earshot (plus a margin) is as bad as being seen — but sneaking is silent.
-      const h = NOISE.hearing[sp.archetype];
+      const h = hearingOf(plan, k);
+      if (vending && h > 0) {
+        const rv = NOISE.vending * h + 1.6;
+        if ((st.x - goalA.x) * (st.x - goalA.x) + (st.z - goalA.z) * (st.z - goalA.z) < rv * rv) vendBad[t] = 1;
+      }
       if (h > 0) {
         let rad = NOISE.step.walk * h * (polished ? NOISE.polished : 1);
         if (quiet && inZone(plan.zones, 'quiet', st.x, st.z)) rad *= NOISE.quiet;
@@ -186,7 +194,8 @@ export function validatePlan(
     }
   };
   spatial(raw);
-  const k = Math.ceil((CLEARANCE[difficulty].seconds * 60) / V_STEP);
+  const clear = CLEARANCE[opts.clearance ?? difficulty];
+  const k = Math.ceil((clear.seconds * 60) / V_STEP);
   const dilate = (src: Uint32Array): Uint32Array => {
     const out = new Uint32Array(T * LW);
     for (let t = 0; t < T; t++) {
@@ -202,6 +211,34 @@ export function validatePlan(
   };
   const blocked = dilate(raw);
   const noisy = dilate(rawNoise);
+  // PIZZA DAY: the counter is off limits (you get shooed) until the lunch bell; first in line means picking up
+  // within the window after it (less a 2 s margin for a player running a little late).
+  const lunch = lunchTick(plan.mission, plan.bellTicks);
+  const lunchStep = Math.ceil(lunch / V_STEP);
+  const lastPick = lunch > 0 ? Math.floor((lunch + (MISSION_RULES.firstWindow - 2) * 60) / V_STEP) : T;
+  if (lunch > 0) {
+    const rr = MISSION_RULES.shooRadius + 1.0;
+    const c0 = Math.max(0, Math.floor((goalA.x - rr) / FINE));
+    const c1 = Math.min(cols - 1, Math.floor((goalA.x + rr) / FINE));
+    const r0 = Math.max(0, Math.floor((goalA.z - rr) / FINE));
+    const r1 = Math.min(rows - 1, Math.floor((goalA.z + rr) / FINE));
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        const dx = (c + 0.5) * FINE - goalA.x;
+        const dz = (r + 0.5) * FINE - goalA.z;
+        if (dx * dx + dz * dz > rr * rr) continue;
+        for (let t = 0; t < Math.min(T, lunchStep); t++) bit(blocked, t, c, r);
+      }
+    }
+  }
+  const quietBuy = (() => {
+    // Dilate the vending noise steps in time by the clearance too.
+    const kk = k;
+    const out = new Uint8Array(T);
+    for (let t = 0; t < T; t++) if (vendBad[t]) for (let u = Math.max(0, t - kk); u <= Math.min(T - 1, t + kk); u++) out[u] = 1;
+    return out;
+  })();
+  const buySteps = Math.ceil((MISSION_RULES.buySeconds * 60) / V_STEP) + 1;
   const isBlocked = (t: number, i: number): boolean => {
     if (t >= T) return true;
     const c = i % cols;
@@ -275,7 +312,9 @@ export function validatePlan(
   }
   const start = cellOf(plan.anchors.start!.x, plan.anchors.start!.z);
   if (dist[0]![start]! < 0) return { ok: false, route: null, seconds: null, expanded: 0, reason: 'noPath' };
-  const budgetSteps = Math.floor((CLEARANCE[difficulty].budget * plan.bellTicks) / V_STEP);
+  // PIZZA DAY's wait for the lunch bell is forced, so its slack is measured on the time after it.
+  const budgetTicks = lunch > 0 ? lunch + clear.budget * (plan.bellTicks - lunch) : clear.budget * plan.bellTicks;
+  const budgetSteps = Math.floor(budgetTicks / V_STEP);
 
   // ── 4. Safe-interval A* (SIPP) over (cell, safe interval, goals done) ──
   // A cell's safe intervals are its maximal runs of unseen time steps. Waiting is free inside an interval, so the
@@ -304,9 +343,15 @@ export function validatePlan(
     return iv;
   };
   const h = (cell: number, g: number): number => dist[g]![cell]! + legAfter[g]!;
-  const advanceG = (cell: number, g: number): number => {
+  // Reaching a goal completes it on arrival — except the vending machine (a purchase, see below) and the pizza
+  // counter after the first-in-line window.
+  const advanceG = (cell: number, g: number, t: number): number => {
     let gg = g;
-    while (gg < G - 1 && dist[gg]![cell] === 0) gg++;
+    while (gg < G - 1 && dist[gg]![cell] === 0) {
+      if (vending && gg === 0) break;
+      if (lunch > 0 && gg === 0 && t > lastPick) break;
+      gg++;
+    }
     return gg;
   };
   // State id → (cell, interval index, g, arrival time, parent, move cost, sneak).
@@ -317,6 +362,7 @@ export function validatePlan(
   const sParent: number[] = [];
   const sCost: number[] = [];
   const sSneak: boolean[] = [];
+  const sBuy: boolean[] = [];
   const sF: number[] = [];
   const sH: number[] = [];
   const best = new Map<number, number>(); // (cell, iv, g) → best arrival
@@ -358,7 +404,7 @@ export function validatePlan(
     }
     return top;
   };
-  const addState = (cell: number, iv: number, g: number, t: number, parent: number, cost: number, sneak: boolean): void => {
+  const addState = (cell: number, iv: number, g: number, t: number, parent: number, cost: number, sneak: boolean, buy = false): void => {
     if (iv >= 64) return;
     const k = keyOf(cell, iv, g);
     const prev = best.get(k);
@@ -372,6 +418,7 @@ export function validatePlan(
     sParent.push(parent);
     sCost.push(cost);
     sSneak.push(sneak);
+    sBuy.push(buy);
     const hh = h(cell, g);
     sH.push(hh);
     sF.push(t + hh);
@@ -379,7 +426,7 @@ export function validatePlan(
   };
   const startIvs = ivOf(start);
   if (startIvs.length === 0 || startIvs[0] !== 0) return { ok: false, route: null, seconds: null, expanded: 0, reason: 'noPath' };
-  addState(start, 0, advanceG(start, 0), 0, -1, 0, false);
+  addState(start, 0, advanceG(start, 0, 0), 0, -1, 0, false);
   const maxExpand = opts.maxExpand ?? 200000;
   let goal = -1;
   let expanded = 0;
@@ -397,6 +444,17 @@ export function validatePlan(
     if (ta + h(cell, g) > budgetSteps) continue;
     const myIv = ivOf(cell);
     const e = myIv[sIv[id]! * 2 + 1]!; // last safe step here
+    // VENDING RUN: stand at the machine for the whole purchase, unseen, with nobody in earshot of it.
+    if (vending && g === 0 && dist[0]![cell] === 0) {
+      for (let t = ta; t + buySteps <= e; t++) {
+        let ok = true;
+        for (let u = t; u <= t + buySteps && ok; u++) ok = quietBuy[u] === 0;
+        if (ok) {
+          addState(cell, sIv[id]!, advanceG(cell, 1, t + buySteps), t + buySteps, id, buySteps, false, true);
+          break;
+        }
+      }
+    }
     const c = cell % cols;
     const r = (cell - c) / cols;
     for (let dr = -1; dr <= 1; dr++) {
@@ -406,7 +464,6 @@ export function validatePlan(
         const nr = r + dr;
         if (!canStep(plan.fine, c, r, dc, dr)) continue;
         const n = nr * cols + nc;
-        const ng = advanceG(n, g);
         const nIv = ivOf(n);
         const sneakCost = dr && dc ? 3 : 2;
         for (let j = 0; j < nIv.length; j += 2) {
@@ -421,14 +478,14 @@ export function validatePlan(
               break;
             }
           }
-          if (walked >= 0) addState(n, j / 2, ng, walked, id, 1, false);
+          if (walked >= 0) addState(n, j / 2, advanceG(n, g, walked), walked, id, 1, false);
           // Sneak: first arrival t with both cells unseen for the whole move (always silent).
           for (let t = Math.max(ta + sneakCost, s0); t <= Math.min(e + sneakCost, e0); t++) {
             if (walked >= 0 && t >= walked) break;
             let clear = true;
             for (let u = t - sneakCost + 1; u <= t && clear; u++) clear = !isBlocked(u, n) && !isBlocked(u, cell);
             if (clear) {
-              addState(n, j / 2, ng, t, id, sneakCost, true);
+              addState(n, j / 2, advanceG(n, g, t), t, id, sneakCost, true);
               break;
             }
           }
@@ -455,7 +512,9 @@ export function validatePlan(
     const depart = sT[id]! - sCost[id]!;
     if (depart > sT[prev]!) route.push(pt(sCell[prev]!, depart, false));
     const p = pt(sCell[id]!, sT[id]!, sSneak[id]!);
-    if (sG[id]! > sG[prev]!) p.interact = true;
+    // A purchase starts (interact) when the wait at the machine ends; anything else completes on arrival.
+    if (sBuy[id]) route[route.length - 1]!.interact = true;
+    else if (sG[id]! > sG[prev]!) p.interact = true;
     route.push(p);
   }
   const seconds = route[route.length - 1]!.tick / 60;

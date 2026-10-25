@@ -138,27 +138,29 @@ export function startChase(st: StaffState, plan: SchoolPlan, x: number, z: numbe
 }
 
 /** Where a PA announcement sends who (null: nobody moves). Pure function of the plan. */
+/** A point two metres out into the corridor from the first door of the first room of this kind (null: none). */
+export function doorOutside(plan: SchoolPlan, kind: string): { x: number; z: number } | null {
+  const room = plan.rooms.find((r) => r.kind === kind);
+  const d = room?.doors[0];
+  if (!d) return null;
+  for (const s of [1, -1]) {
+    const x = d.axis === 'x' ? d.x + s * 2 : d.x;
+    const z = d.axis === 'z' ? d.z + s * 2 : d.z;
+    const c = Math.floor(x / CELL);
+    const r = Math.floor(z / CELL);
+    if (plan.cells[r * plan.grid.cols + c] === CELL_CORRIDOR) return { x, z };
+  }
+  return null;
+}
+
 export function paOrder(plan: SchoolPlan, id: PaEventId): { archetype: StaffSpawn['archetype']; x: number; z: number; seconds: number } | null {
-  const doorOutside = (kind: string): { x: number; z: number } | null => {
-    const room = plan.rooms.find((r) => r.kind === kind);
-    const d = room?.doors[0];
-    if (!d) return null;
-    // Two metres out into the corridor side of the door.
-    for (const s of [1, -1]) {
-      const x = d.axis === 'x' ? d.x + s * 2 : d.x;
-      const z = d.axis === 'z' ? d.z + s * 2 : d.z;
-      const c = Math.floor(x / CELL);
-      const r = Math.floor(z / CELL);
-      if (plan.cells[r * plan.grid.cols + c] === CELL_CORRIDOR) return { x, z };
-    }
-    return null;
-  };
+  const doorOutside_ = (kind: string): { x: number; z: number } | null => doorOutside(plan, kind);
   if (id === 'vpToOffice') {
-    const p = doorOutside('office');
+    const p = doorOutside_('office');
     return p ? { archetype: 'investigator', ...p, seconds: 20 } : null;
   }
   if (id === 'custodialToGym') {
-    const p = doorOutside('gym') ?? doorOutside('cafeteria');
+    const p = doorOutside_('gym') ?? doorOutside_('cafeteria');
     return p ? { archetype: 'wanderer', ...p, seconds: 25 } : null;
   }
   if (id === 'carLights') {

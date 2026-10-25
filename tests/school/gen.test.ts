@@ -16,6 +16,13 @@ describe('generateSchool', () => {
     }
   });
 
+  it('a seed keeps its school name whatever the mission (one school all SCHOOL WEEK)', () => {
+    for (const tier of TIER_IDS) {
+      const names = new Set(MISSION_IDS.map((mission) => generateSchool({ seed: 77, tier, mission, validate: false }).name));
+      expect(names.size).toBe(1);
+    }
+  });
+
   it('different seeds give different schools', () => {
     const hashes = new Set<number>();
     for (let s = 0; s < 20; s++) hashes.add(planHash(generateSchool({ seed: s, tier: 2, mission: 'phone', validate: false })));
@@ -58,7 +65,16 @@ describe('generateSchool', () => {
           const st = TIERS[tier].staff;
           const wantPeople = Object.entries(st).reduce((s, [k, v]) => s + (k === 'sweeper' || k === 'listener' ? 0 : (v ?? 0)), 0);
           expect(p.staff.filter((s) => s.archetype !== 'sweeper' && s.archetype !== 'listener').length).toBeGreaterThanOrEqual(wantPeople);
-          expect(p.staff.filter((s) => s.archetype === 'sweeper').length).toBeLessThanOrEqual(st.sweeper ?? 0);
+          // GYM BAG adds the camera over your locker.
+          expect(p.staff.filter((s) => s.archetype === 'sweeper').length).toBeLessThanOrEqual((st.sweeper ?? 0) + (mission === 'gym' ? 1 : 0));
+          // Mission twists (GDD §7): the secretary by the drawer, the camera on the gym hall, Hargrove for the finale.
+          if (mission === 'phone') expect(p.staff.some((s) => s.skin === 'secretary0')).toBe(true);
+          if (mission === 'gym') {
+            const g = p.anchors.goal!;
+            expect(p.staff.some((s) => s.archetype === 'sweeper' && Math.hypot(s.route[0]!.x - g.x, s.route[0]!.z - g.z) < 4)).toBe(true);
+          }
+          if (mission === 'principal') expect(p.staff.some((s) => s.archetype === 'investigator')).toBe(true);
+          expect(p.snacks.length, `${tier}/${mission}/${seed} snacks`).toBeGreaterThanOrEqual(2);
           expect(Array.from(p.cells).some((v) => v === CELL_CORRIDOR)).toBe(true);
         }
       }

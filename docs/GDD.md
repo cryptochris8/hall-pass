@@ -53,6 +53,14 @@ any button skips) → the bell timer starts → play → **outro** (the student 
 bell rings, or the detention slip slams down) → **Hall Report** (§8) → RETRY / NEXT / MENU.
 **Pause** any time (Esc / Options / pause button): Resume · Restart period · How to play · Settings · Quit.
 
+**As built (M4):** DAILY PERIOD rotates through **all five schools** by date (school = day number mod 5) and the
+five everyday missions (not the finale), at JUNIOR, so it really is the same run for everyone; the GDD's "rotates
+through the unlocked tiers" would have made it differ per player. Numbering: 2026-09-01 is #1. SCHOOL WEEK plays
+FRESHMAN rules Monday–Tuesday and JUNIOR Wednesday–Friday; Monday–Thursday are four of the five everyday missions
+(seeded per week), Friday the PRINCIPAL'S OFFICE. The school keeps its name all week, but the floor plan is drawn
+per mission (the generator places the mission's room first), so the building changes day to day — a known gap.
+CHALLENGE CODE and LOCKER are not in the menu yet (M6 and M5).
+
 ## 2. The student (the player — cosmetic only)
 
 One customizable teen, viewed from the 3/4 cutaway camera (§10). Toy-shelf proportions toned down: head ~1/4.5 of
@@ -210,6 +218,24 @@ change.
 
 Optional per run: **3 snack pickups** (gummy-bear packs) placed off the reference route, for score.
 
+**As built (M4).** Numbers live in `src/sim/tuning.ts` (`MISSION_RULES`) and `src/school/tiers.ts` (`BELL_SECONDS`).
+- **PHONE JAIL:** the secretary is a sentry who sits 1.2–2.2 m from the drawer for 18–26 s (the drawer at the
+  edge of her cone, her glances sweeping over it), then walks to a coffee spot two corridor cells away for 14–20 s
+  and back. The bell is **3:30** (the wait is part of the mission).
+- **VENDING RUN:** GRAB at the machine starts a **6 s purchase**: you can't move, it rattles once a second (an
+  8 m-ish noise), and walking off or GRAB again cancels it (chips lost, try again).
+- **PIZZA DAY:** the lunch bell rings at **45 %** of the 2:30 bell. Before it, coming within 4 m of the counter gets
+  you shooed back out of the cafeteria door. Picking up within **12 s** of the lunch bell is **first in line**
+  (+500); later still counts as done. Then back to class.
+- **LOCKER DROP:** as designed; the "unseen" bonus is the GHOST line.
+- **GYM BAG:** one extra camera on the locker strip 2.75–3.5 m from your locker, sweeping past it, at every tier
+  (even the middle school, which otherwise has none).
+- **PRINCIPAL'S OFFICE:** Hargrove is the first investigator on the roster (added if the school has none). He hears
+  at **×2** and walks and chases **+12 %** faster each time he spots you. The bell is **5:00** (three rooms).
+- Every twist is inside the fairness validator: the purchase must fit a quiet, unseen 6 s window; the pizza route
+  must reach the counter inside the first-in-line window; the secretary, the gym camera and Hargrove's ears are
+  simply part of the simulated staff.
+
 ## 8. Scoring — the Hall Report
 
 The Hall Report is styled as a school report card:
@@ -225,6 +251,11 @@ The Hall Report is styled as a school report card:
 | Distractions that pulled staff off you | 100 each |
 | Caught (busted) | −400 each |
 | Difficulty multiplier | FRESHMAN ×0.8 · JUNIOR ×1.0 · SENIOR ×1.3 |
+
+**As built (M4):** "Hall pass unused" is a flat 300 when you started with any; PIZZA DAY adds **First in line +500**.
+Par is the perfect bot's raw score (before the multiplier) on the reference route of the school you play (it is
+computed in the generator worker). Grade = raw ÷ par: **A+ ≥ 0.97 · A ≥ 0.85 · B ≥ 0.70 · C ≥ 0.50**, else D;
+a run that doesn't finish is always D. Collecting snacks or close calls can beat par.
 
 **Grade** from the score against the run's **par** (set per seed by the bot's run of the reference route at JUNIOR):
 A+ / A / B / C / D, plus the four **ranks** shown big: **GHOST** (never spotted, never caught) · **SMOOTH** (spotted,

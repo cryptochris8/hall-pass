@@ -2,9 +2,10 @@
 // always open (halls are 5 m wide, centred), so staff move in straight lines between waypoints with no pathfinding.
 // Pure. The sim follows these routes exactly; brains added later only react on top of them.
 import type { Rng } from '../../core/rng';
-import { PI, yawOf } from '../../core/fmath';
+import { PI, fcos, fsin, wrapAngle, yawOf } from '../../core/fmath';
+import { findPath } from '../../sim/nav';
 import type { TierDef } from '../tiers';
-import { CELL, CELL_CORRIDOR, type Anchor, type AnchorId, type Archetype, type Room, type StaffSpawn, type Waypoint } from '../types';
+import { CELL, CELL_CORRIDOR, FINE, F_LOW, F_SOLID, type Anchor, type AnchorId, type Archetype, type FineGrid, type MissionId, type Room, type StaffSpawn, type Waypoint } from '../types';
 import { cellAt, cellCentre, corridorDistances, type Layout } from './layout';
 
 const DEG = PI / 180;
@@ -19,6 +20,9 @@ const NAMES: Readonly<Record<Archetype, readonly string[]>> = {
   snitch: ['Preston'],
   listener: ['Mrs. Thistle'],
 };
+
+/** PHONE JAIL's front-office secretary (a sentry with a coffee walk). */
+const SECRETARY = ['Ms. Pruitt', 'Mrs. Delgado'] as const;
 
 /** Cone and speed per archetype (GDD §4; difficulty scales these in the sim). */
 export const STAFF_DEFAULTS: Readonly<Record<Archetype, { speed: number; range: number; half: number; eye: number }>> = {
@@ -161,13 +165,23 @@ function wanderRoute(l: Layout, rng: Rng, speed: number, bellTicks: number): Way
   return pts;
 }
 
-export function placeStaff(l: Layout, rooms: Room[], tier: TierDef, anchors: Partial<Record<AnchorId, Anchor>>, bellTicks: number, rng: Rng): StaffSpawn[] {
+export function placeStaff(
+  l: Layout,
+  fine: FineGrid,
+  rooms: Room[],
+  tier: TierDef,
+  mission: MissionId,
+  anchors: Partial<Record<AnchorId, Anchor>>,
+  bellTicks: number,
+  rng: Rng,
+): StaffSpawn[] | null {
   const out: StaffSpawn[] = [];
   const startRoom = rooms.find((r) => r.tags.includes('start'))!;
   const startCell = doorCell(l, startRoom);
   // Patrol starts are spread out: never your door's hall cell, never another patrol's start.
   const used = new Set<number>([startCell]);
-  const want = (a: Archetype): number => tier.staff[a] ?? 0;
+  // The finale needs Hargrove even at schools that have no vice principal on the roster.
+  const want = (a: Archetype): number => (mission === 'principal' && a === 'investigator' ? Math.max(1, tier.staff[a] ?? 0) : (tier.staff[a] ?? 0));
 
   for (let k = 0; k < want('patroller'); k++) out.push(spawn('patroller', k, patrolRoute(l, rng, used, 2 * S), false, rng));
 
@@ -236,6 +250,17 @@ export function placeStaff(l: Layout, rooms: Room[], tier: TierDef, anchors: Par
   for (let k = 0; k < want('wanderer'); k++) out.push(spawn('wanderer', k, wanderRoute(l, rng, STAFF_DEFAULTS.wanderer.speed, bellTicks), false, rng));
   for (let k = 0; k < want('snitch'); k++) out.push(spawn('snitch', k, wanderRoute(l, rng, STAFF_DEFAULTS.snitch.speed, bellTicks), false, rng));
 
+  if (mission === 'phone') {
+    const sec = secretary(l, fine, rooms, anchors, rng);
+    if (!sec) return null;
+    out.push(sec);
+  }
+  if (mission === 'gym') {
+    const cam = goalCamera(fine, anchors.goal!, rng);
+    if (!cam) return null;
+    out.push(cam);
+  }
+
   for (let k = 0; k < want('listener'); k++) {
     const lib = rooms.find((r) => r.kind === 'library');
     if (!lib) continue;
@@ -244,6 +269,94 @@ export function placeStaff(l: Layout, rooms: Room[], tier: TierDef, anchors: Par
     out.push(spawn('listener', k, [{ x, z, dwell: 1 << 30, look: 0, sweep: 0 }], true, rng));
   }
   return out;
+}
+
+/** Open floor with room for a body (the 3×3 fine block around the point has no solid or low cell). */
+function roomy(fine: FineGrid, x: number, z: number): boolean {
+  const c0 = Math.floor(x / FINE);
+  const r0 = Math.floor(z / FINE);
+  for (let r = r0 - 1; r <= r0 + 1; r++) {
+    for (let c = c0 - 1; c <= c0 + 1; c++) {
+      if (c < 0 || r < 0 || c >= fine.cols || r >= fine.rows || fine.flags[r * fine.cols + c]! & (F_SOLID | F_LOW)) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * PHONE JAIL (GDD §7.1): the secretary sits right beside the drawer, then takes a coffee walk out to the hall and
+ * back — the window you wait for. Ping-pong route: her seat → (a walkable path out of the office) → the coffee
+ * spot two corridor cells along.
+ */
+function secretary(l: Layout, fine: FineGrid, rooms: Room[], anchors: Partial<Record<AnchorId, Anchor>>, rng: Rng): StaffSpawn | null {
+  const office = rooms.find((r) => r.kind === 'office' && r.tags.includes('mission'));
+  const goal = anchors.goal;
+  if (!office || !goal) return null;
+  // Her seat: the roomiest open spot 1.2–2.2 m from the drawer, closest to 1.5 m.
+  let seat: { x: number; z: number } | null = null;
+  let bestErr = Infinity;
+  const c0 = Math.floor(goal.x / FINE);
+  const r0 = Math.floor(goal.z / FINE);
+  for (let r = r0 - 5; r <= r0 + 5; r++) {
+    for (let c = c0 - 5; c <= c0 + 5; c++) {
+      const x = (c + 0.5) * FINE;
+      const z = (r + 0.5) * FINE;
+      const d = Math.sqrt((x - goal.x) * (x - goal.x) + (z - goal.z) * (z - goal.z));
+      if (d < 1.2 || d > 2.2 || !roomy(fine, x, z)) continue;
+      const err = Math.abs(d - 1.5);
+      if (err < bestErr) {
+        bestErr = err;
+        seat = { x, z };
+      }
+    }
+  }
+  if (!seat) return null;
+  const dc = doorCell(l, office);
+  const far = corridorDistances(l, dc % l.cols, Math.floor(dc / l.cols));
+  const spots = corridorCells(l).filter((i) => far[i] === 2);
+  const coffeeCell = spots.length > 0 ? rng.pick(spots) : dc;
+  const door = cellCentre(dc % l.cols, Math.floor(dc / l.cols));
+  const walk = findPath(fine, seat.x, seat.z, door.x, door.z);
+  if (!walk) return null;
+  // Facing the drawer, turned 60° toward the room: it sits at the edge of her cone, and her glances sweep over it.
+  const toGoal = yawOf(goal.x - seat.x, goal.z - seat.z);
+  const rcx = ((office.rect.c0 + office.rect.c1) / 2) * CELL;
+  const rcz = ((office.rect.r0 + office.rect.r1) / 2) * CELL;
+  const toRoom = yawOf(rcx - seat.x, rcz - seat.z);
+  const turn = wrapAngle(toRoom - toGoal) > 0 ? 1 : -1;
+  const look = toGoal + turn * 1.05;
+  const route: Waypoint[] = [{ x: seat.x, z: seat.z, dwell: rng.int(18, 26) * S, look, sweep: 0.45 }];
+  for (let k = 0; k + 1 < walk.length; k += 2) route.push({ x: walk[k]!, z: walk[k + 1]!, dwell: 0, look: null, sweep: 0 });
+  route.push(...compress(l, corridorPath(l, dc, coffeeCell)).slice(1));
+  const end = route[route.length - 1]!;
+  end.dwell = rng.int(14, 20) * S;
+  end.sweep = 0.5;
+  const sp = spawn('sentry', 9, route, false, rng);
+  sp.name = SECRETARY[rng.int(0, SECRETARY.length - 1)]!;
+  sp.skin = 'secretary0';
+  return sp;
+}
+
+/** GYM BAG (GDD §7.5): a camera on the locker strip a few metres from your locker, sweeping past it. */
+function goalCamera(fine: FineGrid, goal: Anchor, rng: Rng): StaffSpawn | null {
+  // The goal stands 0.6 m out from the locker face, facing it (yaw); the strip runs across that.
+  const fx = fsin(goal.yaw);
+  const fz = fcos(goal.yaw);
+  const alX = fcos(goal.yaw);
+  const alZ = -fsin(goal.yaw);
+  const offs = rng.chance(0.5) ? [3.5, -3.5, 2.75, -2.75] : [-3.5, 3.5, -2.75, 2.75];
+  for (const off of offs) {
+    // On the strip face (0.35 m from the goal toward the lockers), `off` along it.
+    const x = goal.x + fx * 0.35 + alX * off;
+    const z = goal.z + fz * 0.35 + alZ * off;
+    const c = Math.floor(x / FINE);
+    const r = Math.floor(z / FINE);
+    if (c < 0 || r < 0 || c >= fine.cols || r >= fine.rows || fine.flags[r * fine.cols + c]! & F_SOLID) continue;
+    const look = yawOf(goal.x - x, goal.z - z);
+    const sp = spawn('sweeper', 9, [{ x, z, dwell: 1 << 30, look, sweep: 0.75 }], true, rng);
+    return sp;
+  }
+  return null;
 }
 
 function isCorner(l: Layout, i: number): boolean {

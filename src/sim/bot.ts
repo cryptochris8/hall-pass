@@ -13,6 +13,7 @@ import { Rng } from '../core/rng';
 import type { RoutePoint, SchoolPlan } from '../school/types';
 import { missionGoals } from './index';
 import { findPath } from './nav';
+import { lunchTick } from './tuning';
 import { BTN_INTERACT, BTN_SNEAK, type SimState, type TickInput } from './types';
 
 export interface BotOptions {
@@ -40,6 +41,10 @@ export function createBot(plan: SchoolPlan, opts: BotOptions = {}): Bot {
   let pathI = 0;
   let pathFor = '';
   let lastCatches = 0;
+  /** Route mode: the schedule has reached an interact point for the goal still to do. */
+  let armed = false;
+  let lastCollected = 0;
+  const lunch = lunchTick(plan.mission, plan.bellTicks);
   const out: TickInput = { moveX: 0, moveY: 0, buttons: 0 };
 
   const steer = (dx: number, dz: number, mag: number, buttons: number): TickInput => {
@@ -64,6 +69,12 @@ export function createBot(plan: SchoolPlan, opts: BotOptions = {}): Bot {
       const s = state.student;
       out.buttons = 0;
       if (state.phase !== 'playing' || s.escort > 0) return steer(0, 0, 0, 0);
+      // Mid-purchase at the vending machine: stand still (moving would cancel it).
+      if (s.buying > 0) return steer(0, 0, 0, 0);
+      if (state.collected.length !== lastCollected) {
+        lastCollected = state.collected.length;
+        armed = false;
+      }
       if (state.catches !== lastCatches) {
         // Busted: the schedule is gone. Walk the rest.
         lastCatches = state.catches;
@@ -73,7 +84,9 @@ export function createBot(plan: SchoolPlan, opts: BotOptions = {}): Bot {
       const next = missionGoals(plan).find((g) => !state.collected.includes(g));
       const a = next ? plan.anchors[next]! : null;
       const atGoal = !!a && (s.x - a.x) * (s.x - a.x) + (s.z - a.z) * (s.z - a.z) < 1.25 * 1.25; // the sim reaches 1.3 m
-      const press = atGoal && (state.prevButtons & BTN_INTERACT) === 0 ? BTN_INTERACT : 0;
+      const edge = atGoal && (state.prevButtons & BTN_INTERACT) === 0;
+      // On the route, press where the schedule says (a purchase must start in its quiet window); off it, on arrival.
+      const press = edge && (mode === 'route' ? armed : state.tick >= lunch) ? BTN_INTERACT : 0;
 
       if (mode === 'route') {
         // Skill slips: now and then it hesitates for a moment and falls behind schedule.
@@ -82,7 +95,10 @@ export function createBot(plan: SchoolPlan, opts: BotOptions = {}): Bot {
           if (rng.chance(1 - skill)) delay += rng.int(10, Math.round(30 + 90 * (1 - skill)));
         }
         const t = state.tick - delay;
-        while (seg + 1 < route.length && route[seg + 1]!.tick <= t) seg++;
+        while (seg + 1 < route.length && route[seg + 1]!.tick <= t) {
+          seg++;
+          if (route[seg]!.interact) armed = true;
+        }
         const p = route[seg]!;
         const q = route[Math.min(seg + 1, route.length - 1)]!;
         const span = q.tick - p.tick;

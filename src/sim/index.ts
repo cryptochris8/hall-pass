@@ -13,9 +13,9 @@ import { fcos, fsin } from '../core/fmath';
 import type { AnchorId, Furniture, SchoolPlan } from '../school/types';
 import { castRay, inZone, lineOfSight, sees } from './detect';
 import { moveStudent } from './move';
-import { chaseSpeed, face, goTo, investigate, lookAround, moveAlong, paOrder, returnToRoute, setMode, startChase, walkSpeed } from './staff/brain';
+import { chaseSpeed, doorOutside, face, goTo, investigate, lookAround, moveAlong, paOrder, returnToRoute, setMode, startChase, walkSpeed } from './staff/brain';
 import { initStaff, stepRoute } from './staff/route';
-import { BRAIN, DETECT, DIFFICULTY, HIDE, NOISE, RULES, THROW } from './tuning';
+import { BRAIN, DETECT, DIFFICULTY, HIDE, MISSION_RULES, NOISE, RULES, THROW, hargroveIndex, hearingOf, lunchTick } from './tuning';
 import {
   BTN_INTERACT,
   BTN_THROW,
@@ -46,7 +46,7 @@ export function createSim(plan: SchoolPlan, config: RunConfig, opts: { absent?: 
     tick: 0,
     bell: plan.bellTicks,
     phase: 'playing',
-    student: { x: start.x, z: start.z, vx: 0, vz: 0, yaw: start.yaw, posture: 'walk', stamina: 1, escort: 0, hidden: -1, hideT: 0, carry: 0 },
+    student: { x: start.x, z: start.z, vx: 0, vz: 0, yaw: start.yaw, posture: 'walk', stamina: 1, escort: 0, hidden: -1, hideT: 0, carry: 0, buying: 0, frozen: 0 },
     staff: plan.staff.map(initStaff),
     collected: [],
     checkpoint: 'start',
@@ -60,6 +60,20 @@ export function createSim(plan: SchoolPlan, config: RunConfig, opts: { absent?: 
     thrown: [],
     paNext: 0,
     escapes: 0,
+    snacksTaken: new Uint8Array(plan.snacks.length),
+    stats: {
+      hiddenTicks: 0,
+      longestHide: 0,
+      longestHideKind: '',
+      cameraAlerts: 0,
+      throws: 0,
+      distractions: 0,
+      sprintTicks: 0,
+      shoos: 0,
+      buysCancelled: 0,
+      firstInLine: null,
+      snacks: 0,
+    },
   };
 }
 
@@ -111,7 +125,7 @@ function hear(state: SimState, x: number, z: number, radius: number, ev: SimEven
   for (let i = 0; i < state.staff.length; i++) {
     const st = state.staff[i]!;
     const spawn = plan.staff[i]!;
-    const h = NOISE.hearing[spawn.archetype];
+    const h = hearingOf(plan, i);
     if (h <= 0 || st.ignore > 0 || !calm(st.mode)) continue;
     const r = radius * h;
     if (dist2(st.x, st.z, x, z) > r * r) continue;
@@ -144,6 +158,9 @@ export function step(state: SimState, input: TickInput): SimEvent[] {
     goTo(st, plan, order.x, order.z);
   }
 
+  const lunch = lunchTick(plan.mission, plan.bellTicks);
+  if (lunch > 0 && state.tick === lunch) ev.push({ t: 'lunchBell' });
+
   const present = !state.absent;
   const pressed = present ? input.buttons & ~state.prevButtons : 0;
   state.prevButtons = present ? input.buttons : 0;
@@ -167,6 +184,11 @@ export function step(state: SimState, input: TickInput): SimEvent[] {
       }
     } else if (s.hidden >= 0) {
       s.hideT++;
+      state.stats.hiddenTicks++;
+      if (s.hideT > state.stats.longestHide) {
+        state.stats.longestHide = s.hideT;
+        state.stats.longestHideKind = plan.furniture[s.hidden]!.kind;
+      }
       s.vx = 0;
       s.vz = 0;
       const moving = input.moveX * input.moveX + input.moveY * input.moveY > 40 * 40;
@@ -174,6 +196,25 @@ export function step(state: SimState, input: TickInput): SimEvent[] {
         ev.push({ t: 'hide', spot: s.hidden, enter: false });
         s.hidden = -1;
       }
+    } else if (s.buying > 0) {
+      // VENDING RUN: standing at the machine while it whirs and clunks. Walking off (or GRAB) cancels it.
+      s.vx = 0;
+      s.vz = 0;
+      const moving = input.moveX * input.moveX + input.moveY * input.moveY > 40 * 40;
+      if ((pressed & BTN_INTERACT) !== 0 || moving) {
+        s.buying = 0;
+        state.stats.buysCancelled++;
+        ev.push({ t: 'buy', on: false, done: false });
+      } else if (--s.buying === 0) {
+        state.collected.push('goal');
+        ev.push({ t: 'buy', on: false, done: true });
+        ev.push({ t: 'pickup', anchor: 'goal' });
+        emitNoise(state, s.x, s.z, NOISE.vending, 'vending', ev);
+      } else if (s.buying % SIM_HZ === 0) emitNoise(state, s.x, s.z, NOISE.vending, 'vending', ev);
+    } else if (s.frozen > 0) {
+      s.frozen--;
+      s.vx = 0;
+      s.vz = 0;
     } else {
       moveStudent(plan.fine, s, input);
       if ((pressed & BTN_INTERACT) !== 0) interact(state, ev);
@@ -190,6 +231,7 @@ export function step(state: SimState, input: TickInput): SimEvent[] {
       if (s.posture === 'sprint' && inZone(plan.zones, 'echo', s.x, s.z)) r *= NOISE.echoSprint;
       if (inZone(plan.zones, 'quiet', s.x, s.z)) r *= NOISE.quiet;
       const speed2 = s.vx * s.vx + s.vz * s.vz;
+      if (s.posture === 'sprint' && speed2 > 0.25) state.stats.sprintTicks++;
       if (speed2 > 0.25) {
         hear(state, s.x, s.z, r, ev);
         if (s.posture === 'sprint' && state.tick % Math.round(NOISE.ringEvery * SIM_HZ) === 0) ev.push({ t: 'noise', x: s.x, z: s.z, radius: r, source: 'sprint' });
@@ -238,7 +280,10 @@ export function step(state: SimState, input: TickInput): SimEvent[] {
     if (lvl !== st.level) {
       st.level = lvl;
       ev.push({ t: 'suspicion', staff: i, level: lvl });
-      if (lvl === 'spotted' && st.mode !== 'chase') state.spottings++;
+      if (lvl === 'spotted' && st.mode !== 'chase') {
+        state.spottings++;
+        st.heat++;
+      }
     }
 
     // Archetypes that don't chase.
@@ -252,7 +297,9 @@ export function step(state: SimState, input: TickInput): SimEvent[] {
     // Seen while going about business → stop and stare.
     if (calm(st.mode) && seen > 0 && st.suspicion >= BRAIN.notice && spawn.archetype !== 'snitch') setMode(st, 'notice');
 
-    brain(state, i, ev, diff.staffSpeed);
+    // PRINCIPAL'S OFFICE: Hargrove walks faster every time he spots you.
+    const boost = plan.mission === 'principal' && i === hargroveIndex(plan) ? 1 + MISSION_RULES.hargroveBoost * st.heat : 1;
+    brain(state, i, ev, diff.staffSpeed * boost);
   }
 
   // ── thrown things land ──
@@ -261,7 +308,21 @@ export function step(state: SimState, input: TickInput): SimEvent[] {
     if (--t.t > 0) continue;
     state.thrown.splice(k, 1);
     const r = NOISE.throwLand * (inZone(plan.zones, 'quiet', t.toX, t.toZ) ? NOISE.quiet : 1);
+    // A distraction counts when it sends off someone who was onto you, or close by.
+    let onto = 0;
+    for (let k2 = 0; k2 < state.staff.length; k2++) {
+      const o = state.staff[k2]!;
+      if (o.level !== 'calm' || dist2(o.x, o.z, s.x, s.z) < 10 * 10) onto |= 1 << k2;
+    }
+    const before = state.staff.map((o) => o.mode === 'investigate' && o.wait < 0 ? o.tx * 1e4 + o.tz : NaN);
     emitNoise(state, t.toX, t.toZ, r, 'throw', ev);
+    for (let k2 = 0; k2 < state.staff.length; k2++) {
+      const o = state.staff[k2]!;
+      if ((onto & (1 << k2)) !== 0 && o.mode === 'investigate' && o.tx * 1e4 + o.tz !== before[k2]) {
+        state.stats.distractions++;
+        break;
+      }
+    }
   }
   if (state.phase !== 'playing') return ev;
 
@@ -272,6 +333,29 @@ export function step(state: SimState, input: TickInput): SimEvent[] {
       if (dist2(s.x, s.z, a.x, a.z) < RULES.checkpointRadius * RULES.checkpointRadius) {
         state.checkpoint = id as AnchorId;
         ev.push({ t: 'checkpoint', at: state.checkpoint });
+      }
+    }
+    for (let k = 0; k < plan.snacks.length; k++) {
+      const sn = plan.snacks[k]!;
+      if (state.snacksTaken[k] || dist2(s.x, s.z, sn.x, sn.z) > MISSION_RULES.snackReach * MISSION_RULES.snackReach) continue;
+      state.snacksTaken[k] = 1;
+      state.stats.snacks++;
+      ev.push({ t: 'snack', index: k });
+    }
+    // PIZZA DAY: the lunch staff shoo you off the counter until the lunch bell.
+    if (lunch > 0 && state.tick < lunch && s.buying === 0) {
+      const g = plan.anchors.goal!;
+      if (dist2(s.x, s.z, g.x, g.z) < MISSION_RULES.shooRadius * MISSION_RULES.shooRadius) {
+        const out = doorOutside(plan, 'cafeteria');
+        if (out) {
+          s.x = out.x;
+          s.z = out.z;
+        }
+        s.vx = 0;
+        s.vz = 0;
+        s.frozen = Math.round(MISSION_RULES.shooSeconds * SIM_HZ);
+        state.stats.shoos++;
+        ev.push({ t: 'shoo' });
       }
     }
     const goals = missionGoals(plan);
@@ -455,6 +539,7 @@ function cameraAlert(state: SimState, cam: number, ev: SimEvent[]): void {
       best = k;
     }
   }
+  state.stats.cameraAlerts++;
   if (best < 0) return;
   ev.push({ t: 'cameraAlert', camera: cam, to: best });
   investigate(state.staff[best]!, plan, plan.staff[best]!, c.lastX, c.lastZ);
@@ -489,10 +574,23 @@ function interact(state: SimState, ev: SimEvent[]): void {
   if (next) {
     const a = plan.anchors[next]!;
     if (dist2(s.x, s.z, a.x, a.z) < RULES.reach * RULES.reach) {
+      if (plan.mission === 'vending') {
+        // The purchase takes a while (and rattles); see the student block.
+        s.buying = MISSION_RULES.buySeconds * SIM_HZ;
+        s.vx = 0;
+        s.vz = 0;
+        ev.push({ t: 'buy', on: true, done: false });
+        emitNoise(state, s.x, s.z, NOISE.vending, 'vending', ev);
+        return;
+      }
+      const lunch = lunchTick(plan.mission, plan.bellTicks);
+      if (lunch > 0) {
+        if (state.tick < lunch) return;
+        state.stats.firstInLine = state.tick <= lunch + MISSION_RULES.firstWindow * SIM_HZ;
+      }
       state.collected.push(next);
       ev.push({ t: 'pickup', anchor: next });
-      const vending = plan.mission === 'vending';
-      emitNoise(state, s.x, s.z, vending ? NOISE.vending : NOISE.pickup, vending ? 'vending' : 'pickup', ev);
+      emitNoise(state, s.x, s.z, NOISE.pickup, 'pickup', ev);
       return;
     }
   }
@@ -546,6 +644,7 @@ function throwItem(state: SimState, ev: SimEvent[]): void {
   const t = { fromX: s.x, fromZ: s.z, toX: s.x + dx * d, toZ: s.z + dz * d, t: THROW.flightTicks };
   state.thrown.push(t);
   s.carry--;
+  state.stats.throws++;
   ev.push({ t: 'throw', fromX: t.fromX, fromZ: t.fromZ, toX: t.toX, toZ: t.toZ, ticks: t.t });
 }
 
@@ -572,6 +671,11 @@ function caught(state: SimState, i: number, ev: SimEvent[]): void {
   }
   state.catches++;
   ev.push({ t: 'caught', staff: i, passUsed: false });
+  if (state.student.buying > 0) {
+    state.student.buying = 0;
+    state.stats.buysCancelled++;
+    ev.push({ t: 'buy', on: false, done: false });
+  }
   for (let k = 0; k < state.staff.length; k++) {
     const o = state.staff[k]!;
     if (o.mode === 'chase' || o.mode === 'search' || o.mode === 'notice') {
@@ -619,6 +723,8 @@ export function hashState(state: SimState): number {
   mix(s.escort);
   mix(s.hidden);
   mix(s.carry);
+  mix(s.buying);
+  mix(s.frozen);
   for (const st of state.staff) {
     mix(st.x);
     mix(st.z);
@@ -632,12 +738,14 @@ export function hashState(state: SimState): number {
     mix(st.chaseT);
     mix(st.lastX);
     mix(st.lastZ);
+    mix(st.heat);
   }
   mix(state.collected.length);
   mix(state.catches);
   mix(state.passes);
   mix(state.thrown.length);
   mix(state.paNext);
+  for (let k = 0; k < state.snacksTaken.length; k++) mix(state.snacksTaken[k]!);
   return h >>> 0;
 }
 

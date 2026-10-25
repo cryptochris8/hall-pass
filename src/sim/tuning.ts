@@ -1,6 +1,6 @@
 // Every gameplay number of the sim (docs/ARCHITECTURE.md §5: nothing else hard-codes one) and the difficulty table
 // (docs/GDD.md §9). Owner: sim.
-import type { Archetype, Difficulty } from '../school/types';
+import type { Archetype, Difficulty, MissionId, SchoolPlan } from '../school/types';
 
 export const STUDENT = {
   radius: 0.3,
@@ -147,6 +147,41 @@ export const RULES = {
   passIgnore: 3,
   maxCatches: 3,
 };
+
+/** Mission twists (docs/GDD.md §7). */
+export const MISSION_RULES = {
+  /** VENDING RUN: the purchase takes this long, rattling (NOISE.vending) once a second; walking off cancels it. */
+  buySeconds: 6,
+  /** PIZZA DAY: the lunch bell rings at this fraction of the bell; the counter is shooed off before it. */
+  lunchAt: 0.45,
+  /** Seconds after the lunch bell you can still be first in line. */
+  firstWindow: 12,
+  /** Lunch staff shoo you away from within this radius of the counter before the lunch bell (m). */
+  shooRadius: 4,
+  /** Seconds you're frozen after a shoo. */
+  shooSeconds: 0.75,
+  /** PRINCIPAL'S OFFICE: Hargrove hears everything (hearing ×) and walks faster each time he spots you (+ per spot). */
+  hargroveHearing: 2,
+  hargroveBoost: 0.12,
+  /** Snack pickup radius (m). */
+  snackReach: 0.8,
+};
+
+/** Tick the PIZZA DAY lunch bell rings (0 for other missions). */
+export function lunchTick(mission: MissionId, bellTicks: number): number {
+  return mission === 'pizza' ? Math.floor(bellTicks * MISSION_RULES.lunchAt) : 0;
+}
+
+/** Hargrove: the first investigator on the roster (PRINCIPAL'S OFFICE gives him sharp ears and a temper). −1 if none. */
+export function hargroveIndex(plan: Pick<SchoolPlan, 'staff'>): number {
+  return plan.staff.findIndex((s) => s.archetype === 'investigator');
+}
+
+/** Hearing multiplier for staff member `i` of this plan. */
+export function hearingOf(plan: Pick<SchoolPlan, 'staff' | 'mission'>, i: number): number {
+  const h = NOISE.hearing[plan.staff[i]!.archetype];
+  return plan.mission === 'principal' && i === hargroveIndex(plan) ? h * MISSION_RULES.hargroveHearing : h;
+}
 
 export interface DifficultyDef {
   fill: number;

@@ -103,12 +103,12 @@ export const MISSION_ROOM: Readonly<Record<MissionId, RoomKind | null>> = {
 
 /** Bell timer per mission (seconds). */
 export const BELL_SECONDS: Readonly<Record<MissionId, number>> = {
-  phone: 180,
+  phone: 210,
   vending: 180,
   pizza: 150,
   locker: 180,
   gym: 180,
-  principal: 270,
+  principal: 300,
 };
 
 /** Room footprint in cells (w × h before rotation). */

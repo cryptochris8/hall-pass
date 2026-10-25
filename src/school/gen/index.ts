@@ -17,6 +17,7 @@ import { buildFine, floodOpen } from './fine';
 import { furnish } from './furnish';
 import { buildSpine, growBranches, newLayout, placeRooms } from './layout';
 import { schoolName } from './names';
+import { placeSnacks } from './snacks';
 import { placeStaff } from './staff';
 
 export interface GenConfig {
@@ -48,6 +49,7 @@ const SYS_FURNISH = 0x5c4003;
 const SYS_STAFF = 0x5c4004;
 const SYS_NAME = 0x5c4005;
 const SYS_PA = 0x5c4006;
+const SYS_SNACK = 0x5c4007;
 
 export function generateSchool(config: GenConfig): SchoolPlan {
   const budget = { left: VALIDATION_BUDGET };
@@ -62,11 +64,30 @@ export function generateSchool(config: GenConfig): SchoolPlan {
   const fbBudget = { left: VALIDATION_BUDGET };
   for (let attempt = 0; attempt < MAX_TRIES && fbBudget.left > 0; attempt++) {
     const plan = tryGenerate({ ...config, seed: fb }, attempt, fbBudget);
-    if (plan && (plan.referenceRoute || config.validate === false)) return { ...plan, seed: config.seed, fallback: true };
+    if (plan && (plan.referenceRoute || config.validate === false)) return { ...plan, ...namesFor(config), seed: config.seed, fallback: true };
   }
-  // Nothing validated: ship the first playable layout (still reachability-checked), flagged, with no route.
-  if (unvalidated) return { ...unvalidated, fallback: true };
+  // Nothing validated at this difficulty's clearance: accept the first layout if it validates at the next tighter
+  // one (FRESHMAN demands the widest margins, so its hardest schools can fail where JUNIOR's pass).
+  if (unvalidated) {
+    const d = config.difficulty ?? 'junior';
+    const tighter = d === 'freshman' ? 'junior' : d === 'junior' ? 'senior' : null;
+    if (tighter) {
+      const v = validatePlan(unvalidated, d, { clearance: tighter });
+      if (v.ok) {
+        unvalidated.referenceRoute = v.route;
+        unvalidated.snacks = placeSnacks(unvalidated, floodOpen(unvalidated.fine, unvalidated.anchors.start!.x, unvalidated.anchors.start!.z), new Rng(hashInts(config.seed, 0, SYS_SNACK)));
+        return unvalidated;
+      }
+    }
+    // Still nothing: ship it (reachability-checked), flagged, with no route.
+    return { ...unvalidated, fallback: true };
+  }
   throw new Error(`generateSchool: tier ${config.tier} fallback seed failed`);
+}
+
+/** The school's name depends on the seed alone (not the attempt), so a SCHOOL WEEK keeps one name all week. */
+function namesFor(config: GenConfig): { name: string; motto: string } {
+  return schoolName(config.tier, new Rng(hashInts(config.seed, 0, SYS_NAME)));
 }
 
 /**
@@ -107,11 +128,12 @@ function tryGenerate(config: GenConfig, attempt: number, budget: { left: number 
   }
   for (const [id, a] of Object.entries(f.anchors)) if (a && !reachable(a.x, a.z)) return fail(`anchor:${id}`);
 
-  const names = schoolName(config.tier, sub(SYS_NAME));
+  const names = namesFor(config);
   let first: SchoolPlan | null = null;
   for (let s = 0; s < STAFF_TRIES; s++) {
     const salt = s * 7919;
-    const staff = placeStaff(l, rooms, tier, f.anchors, bellTicks, sub(SYS_STAFF + salt));
+    const staff = placeStaff(l, fine, rooms, tier, config.mission, f.anchors, bellTicks, sub(SYS_STAFF + salt));
+    if (!staff) return fail('staff:mission');
     if (staff.some((sp) => sp.archetype !== 'sweeper' && sp.route.some((w) => !reachable(w.x, w.z)))) {
       fail('staff:unreachable');
       continue;
@@ -139,6 +161,7 @@ function tryGenerate(config: GenConfig, attempt: number, budget: { left: number 
       fallback: false,
       referenceRoute: null,
     };
+    plan.snacks = placeSnacks(plan, reach, sub(SYS_SNACK));
     if (config.validate === false) return plan;
     first ??= plan;
     if (budget.left <= 0) break;
@@ -146,6 +169,7 @@ function tryGenerate(config: GenConfig, attempt: number, budget: { left: number 
     const v = validatePlan(plan, config.difficulty ?? 'junior');
     if (v.ok) {
       plan.referenceRoute = v.route;
+      plan.snacks = placeSnacks(plan, reach, sub(SYS_SNACK));
       return plan;
     }
     fail(`validate:${v.reason}`);

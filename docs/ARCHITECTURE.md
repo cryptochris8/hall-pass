@@ -321,6 +321,18 @@ name, staff names, mission), and `src/share` is where the host bridge would go. 
 | M6 | Share | Share card + floor-plan image, challenge codes, ghost recording and replay |
 | M7 | Polish | Balance suite green (GDD §12 targets), perf budget on a real phone, e2e, cover art |
 
+**M4 as built.** Mission twists in `src/sim` (`MISSION_RULES`, `hearingOf`, `lunchTick` in `tuning.ts`; purchase,
+shoo, snacks and run stats in `index.ts`) and in the generator (`gen/staff.ts`: the secretary, the gym camera,
+Hargrove; `gen/snacks.ts`). The validator models the 6 s purchase (a dwell at the machine in a quiet, unseen window),
+the pizza window (counter blocked before the lunch bell, pick-up within the first-in-line window, slack measured after
+the bell) and Hargrove's ears; a school that fails every validation at its difficulty is accepted if it passes at the
+next tighter clearance. Scoring is pure: `src/sim/score.ts` (`hallReport`, `computePar`, `remarks`). Modes:
+`src/game/modes.ts` (DAILY seed/number, week schedule and grade). Flow: `src/game/app.ts` (title with a bot-played
+attract run → menus → loading → mission card fly-over → play / pause → outro → Hall Report). Schools are built in the
+worker with their par and cached (`src/game/schools.ts`), so the next week day is prefetched during the report. Menus:
+`src/ui` (`Ui` screen manager driven by MenuActions, `screens.ts` mission card + report card, `text.ts`). Save data:
+`src/storage` (sanitized on load, every access guarded).
+
 Owners work in parallel from M3 on: **school**, **sim**, **world**, **people**, **audio**, **ui**, with
 **integration** owning game, render core, input, share, storage, headless and e2e.
 
@@ -336,6 +348,10 @@ Owners work in parallel from M3 on: **school**, **sim**, **world**, **people**, 
   Report → share card, plus a phone-viewport layout pass.
 
 ## 14. Debug hooks / URL params
+
+As built (M4) `window.__HP__` also has `phase()`, `play('daily' | 'quick' | 'week', config?)`, `menu()`, `start()`
+(skip the mission card), `action(menuAction)`, `report()`, `save()` and `autopilot(skill | null)` (the bot plays;
+`warp(s)` then steps with it). `?autostart=1` skips the title and the mission card.
 
 With `?test=1` (always in dev) the app exposes `window.__HP__` (src/game/debug.ts): `screen()`, `seed()`,
 `config()`, `school()` (the SchoolPlan), `staff()` (poses + suspicion), `route()` (the reference route),
