@@ -9,8 +9,8 @@ const TIER_IDS = [1, 2, 3, 4, 5] as const satisfies readonly TierId[];
 describe('generateSchool', () => {
   it('is deterministic: same config, same plan', () => {
     for (const tier of TIER_IDS) {
-      const a = generateSchool({ seed: 1234, tier, mission: 'phone' });
-      const b = generateSchool({ seed: 1234, tier, mission: 'phone' });
+      const a = generateSchool({ seed: 1234, tier, mission: 'phone', validate: false });
+      const b = generateSchool({ seed: 1234, tier, mission: 'phone', validate: false });
       expect(planHash(a)).toBe(planHash(b));
       expect(a.name).toBe(b.name);
     }
@@ -18,14 +18,14 @@ describe('generateSchool', () => {
 
   it('different seeds give different schools', () => {
     const hashes = new Set<number>();
-    for (let s = 0; s < 20; s++) hashes.add(planHash(generateSchool({ seed: s, tier: 2, mission: 'phone' })));
+    for (let s = 0; s < 20; s++) hashes.add(planHash(generateSchool({ seed: s, tier: 2, mission: 'phone', validate: false })));
     expect(hashes.size).toBe(20);
   });
 
   it('fallback seeds generate without falling back, for every mission', () => {
     for (const tier of TIER_IDS) {
       for (const mission of MISSION_IDS) {
-        const p = generateSchool({ seed: FALLBACK_SEEDS[tier], tier, mission });
+        const p = generateSchool({ seed: FALLBACK_SEEDS[tier], tier, mission, validate: false });
         expect(p.fallback, `tier ${tier} ${mission}`).toBe(false);
       }
     }
@@ -38,7 +38,7 @@ describe('generateSchool', () => {
     for (const tier of TIER_IDS) {
       for (const mission of MISSION_IDS) {
         for (let seed = 0; seed < 100; seed++) {
-          const p = generateSchool({ seed, tier, mission });
+          const p = generateSchool({ seed, tier, mission, validate: false });
           n++;
           if (p.fallback) fallbacks++;
           rerolls += p.rerolls;
@@ -53,9 +53,12 @@ describe('generateSchool', () => {
           const reach = floodOpen(p.fine, start.x, start.z);
           const ok = (x: number, z: number): boolean => reach[Math.floor(z / FINE) * p.fine.cols + Math.floor(x / FINE)] === 1;
           for (const a of Object.values(p.anchors)) expect(ok(a!.x, a!.z)).toBe(true);
-          const want = Object.values(TIERS[tier].staff).reduce((s, v) => s + (v ?? 0), 0);
-          // Listener needs a library; every other archetype always places.
-          expect(p.staff.length).toBeGreaterThanOrEqual(want - (TIERS[tier].staff.listener ?? 0));
+          // People always place (the listener needs a library); cameras only where there's a junction away from your
+          // classroom and the goal, so a school may have fewer.
+          const st = TIERS[tier].staff;
+          const wantPeople = Object.entries(st).reduce((s, [k, v]) => s + (k === 'sweeper' || k === 'listener' ? 0 : (v ?? 0)), 0);
+          expect(p.staff.filter((s) => s.archetype !== 'sweeper' && s.archetype !== 'listener').length).toBeGreaterThanOrEqual(wantPeople);
+          expect(p.staff.filter((s) => s.archetype === 'sweeper').length).toBeLessThanOrEqual(st.sweeper ?? 0);
           expect(Array.from(p.cells).some((v) => v === CELL_CORRIDOR)).toBe(true);
         }
       }

@@ -172,6 +172,8 @@ export interface RoutePoint {
   z: number;
   tick: number;
   sneak: boolean;
+  /** Press interact here (a mission pickup). */
+  interact?: boolean;
 }
 
 export interface FineGrid {

@@ -17,7 +17,9 @@ import { PAL } from '../render/palette';
 import type { Quality } from '../render/types';
 import { generateSchool } from '../school/gen';
 import type { Difficulty, MissionId, SchoolPlan, TierId } from '../school/types';
-import { createSim, missionGoals, step, BTN_INTERACT, BTN_SNEAK, BTN_SPRINT, SIM_DT, type RunConfig, type SimEvent, type SimState, type TickInput } from '../sim';
+import { createSim, hideFront, missionGoals, step, BTN_INTERACT, BTN_SNEAK, BTN_SPRINT, BTN_THROW, SIM_DT, type RunConfig, type SimEvent, type SimState, type TickInput } from '../sim';
+import { HIDE, RULES, THROW } from '../sim/tuning';
+import { buildStealthFx, type StealthFx } from '../world/fx';
 import { buildActors, takeSnapshot, type ActorsView, type Snapshot } from '../world/actors';
 import { buildSchoolView, type SchoolView, type ViewPoints } from '../world/school';
 import { renderDpr } from './device';
@@ -35,6 +37,13 @@ export interface AppParams {
 }
 
 const MAX_STEPS = 4;
+
+const PA_LINES: Record<'vpToOffice' | 'custodialToGym' | 'carLights' | 'hatsOff', string> = {
+  vpToOffice: '"Would Vice Principal Hargrove please come to the main office."',
+  custodialToGym: '"Custodial to the gym, please."',
+  carLights: '"Mr. Dunlap, your car lights are on."',
+  hatsOff: '"Reminder: hats off in the hallway."',
+};
 
 const GOAL_LINE: Record<MissionId, string> = {
   phone: 'Get your phone from the front-office drawer',
@@ -55,6 +64,7 @@ export class App {
   private sim!: SimState;
   private view: SchoolView | null = null;
   private actors: ActorsView | null = null;
+  private fx: StealthFx | null = null;
   private prev!: Snapshot;
   private acc = 0;
   private last = 0;
@@ -102,7 +112,7 @@ export class App {
       move: 'xy',
       moveLabel: 'MOVE',
       primary: { label: 'GRAB', icon: 'hand' },
-      secondary: { label: 'SNEAK', icon: 'brake', hold: true },
+      secondary: { label: 'THROW', icon: 'toss' },
       alt: { label: 'SPRINT', icon: 'run', hold: true },
     });
 
@@ -124,17 +134,51 @@ export class App {
     });
   }
 
+  private worker: Worker | null = null;
+  private genId = 0;
+  private generating = false;
+
+  /** Build a school off the main thread (sync fallback when workers aren't available), then start the run. */
   newRun(change: { seed?: number; tier?: TierId; mission?: MissionId; difficulty?: Difficulty }): void {
     const base = this.config ?? { seed: 1, tier: 1, mission: 'phone', difficulty: 'junior', daily: null };
-    this.config = { ...base, ...change, daily: null };
-    this.plan = generateSchool(this.config);
+    const config: RunConfig = { ...base, ...change, daily: null };
+    this.config = config;
+    const id = ++this.genId;
+    this.generating = true;
+    this.hud.showBanner('Building the school…', `Tier ${config.tier} · checking there's a way through unseen`, null);
+    const done = (plan: SchoolPlan): void => {
+      if (id !== this.genId) return; // a newer request superseded this one
+      this.generating = false;
+      this.startRun(plan);
+    };
+    try {
+      this.worker ??= new Worker(new URL('./genWorker.ts', import.meta.url), { type: 'module' });
+      this.worker.onmessage = (e: MessageEvent<{ id: number; plan: SchoolPlan }>): void => {
+        if (e.data.id === this.genId) done(e.data.plan);
+      };
+      this.worker.onerror = (): void => {
+        this.worker?.terminate();
+        this.worker = null;
+        done(generateSchool(config));
+      };
+      this.worker.postMessage({ id, seed: config.seed, tier: config.tier, mission: config.mission, difficulty: config.difficulty });
+    } catch {
+      this.worker = null;
+      done(generateSchool(config));
+    }
+  }
+
+  private startRun(plan: SchoolPlan): void {
+    this.plan = plan;
     this.sim = createSim(this.plan, this.config);
     this.prev = takeSnapshot(this.sim);
     this.view?.dispose();
     this.actors?.dispose();
+    this.fx?.dispose();
     this.view = buildSchoolView(this.plan, { shadows: this.shadows });
     this.actors = buildActors(this.plan, { shadows: this.shadows });
-    this.renderer.scene.add(this.view.root, this.actors.root);
+    this.fx = buildStealthFx();
+    this.renderer.scene.add(this.view.root, this.actors.root, this.fx.root);
     this.renderer.invalidateCompile();
     this.acc = 0;
     this.ended = false;
@@ -157,16 +201,20 @@ export class App {
   private frame(dt: number): void {
     const input = this.input;
     input.update(dt);
+    if (!this.sim) {
+      this.renderer.render(dt);
+      return;
+    }
     for (const a of input.getMenuActions()) if (a === 'pause') this.hud.togglePanel();
     const c = input.getControls();
     if (this.ended) {
-      if (c.primaryPressed) this.newRun({ seed: (this.config.seed + 1) >>> 0 });
+      if (c.primaryPressed && !this.generating) this.newRun({ seed: (this.config.seed + 1) >>> 0 });
     }
     this.tick.moveX = Math.round(clamp(c.moveX, -1, 1) * 127);
     this.tick.moveY = Math.round(clamp(c.moveY, -1, 1) * 127);
-    this.tick.buttons = (c.secondary ? BTN_SNEAK : 0) | (c.alt ? BTN_SPRINT : 0) | (c.primary ? BTN_INTERACT : 0);
+    this.tick.buttons = (c.sneak ? BTN_SNEAK : 0) | (c.secondary ? BTN_THROW : 0) | (c.alt ? BTN_SPRINT : 0) | (c.primary ? BTN_INTERACT : 0);
 
-    if (!this.paused && !this.ended) {
+    if (!this.paused && !this.ended && !this.generating) {
       this.acc += dt;
       let steps = 0;
       while (this.acc >= SIM_DT && steps < MAX_STEPS) {
@@ -180,6 +228,7 @@ export class App {
     }
     const alpha = this.paused || this.ended ? 1 : clamp(this.acc / SIM_DT, 0, 1);
     this.actors!.update(this.prev, this.sim, alpha, this.camera.cones, this.paused || this.ended ? 0 : dt);
+    this.fx!.update(this.paused ? 0 : dt);
     const f = this.actors!.focus;
     this.placeCamera(false, dt);
     const camPos = this.renderer.rig.camera.position;
@@ -218,6 +267,7 @@ export class App {
   private onEvents(ev: SimEvent[]): void {
     this.lastEvents = ev;
     this.actors?.onEvents(ev, this.sim);
+    this.fx?.onEvents(ev);
     for (const e of ev) {
       if (e.t === 'pickup') this.view?.setGoalDone(e.anchor, true);
       if (e.t === 'caught') {
@@ -225,6 +275,11 @@ export class App {
         if (e.passUsed) this.flash(`${who}: "Oh — carry on."`, 'You showed your hall pass.');
         else if (this.sim.phase === 'playing') this.flash('BUSTED', `${who}: "Where are we going?" Walking you back…`);
       }
+      if (e.t === 'pa') this.flash('PA ANNOUNCEMENT', PA_LINES[e.id]);
+      if (e.t === 'report') this.flash('Preston', `"${this.plan.staff[e.to]!.name}! Someone's out of class!"`);
+      if (e.t === 'cameraAlert') this.flash('Security camera', `${this.plan.staff[e.to]!.name} is coming to check.`);
+      if (e.t === 'found') this.flash('Found you', `${this.plan.staff[e.staff]!.name} saw you climb in.`);
+      if (e.t === 'chase' && !e.on && e.escaped && !this.sim.staff.some((st) => st.mode === 'chase')) this.flash('Lost them', 'They gave up looking.');
       if (e.t === 'end') this.onEnd(e.phase);
     }
   }
@@ -258,6 +313,7 @@ export class App {
     const goals = missionGoals(this.plan);
     const left = goals.filter((g) => !s.collected.includes(g)).length;
     const line = left > 0 ? (goals.length > 1 ? `${GOAL_LINE[this.config.mission]} (${goals.length - left}/${goals.length})` : GOAL_LINE[this.config.mission]) : 'Got it. Back to your seat!';
+    const prompt = this.promptFor(s);
     const st = this.renderer.stats();
     this.hud.update({
       bellTicks: s.bell,
@@ -270,6 +326,10 @@ export class App {
       mission: this.config.mission,
       difficulty: this.config.difficulty,
       camera: this.camera,
+      prompt,
+      carry: s.student.carry,
+      hidden: s.student.hidden >= 0,
+      chased: s.staff.some((st) => st.mode === 'chase'),
       stats:
         `${this.plan.name} (${missionName(this.config.mission)})\n` +
         `${st.fps} fps · ${st.drawCalls} draws · ${Math.round(st.triangles / 1000)}k tris · dpr ${st.pixelRatio}\n` +
@@ -285,6 +345,31 @@ export class App {
       return this.proj.visible ? { x: this.proj.x, y: this.proj.y, level: st2.level } : null;
     });
     this.hud.markers(pts);
+  }
+
+  /** What GRAB would do right now (shown as a prompt). */
+  private promptFor(s: SimState): string | null {
+    const st = s.student;
+    if (st.escort > 0 || s.phase !== 'playing') return null;
+    if (st.hidden >= 0) return 'GRAB: climb out';
+    const next = missionGoals(this.plan).find((g) => !s.collected.includes(g));
+    const a = next ? this.plan.anchors[next] : null;
+    if (a && Math.hypot(st.x - a.x, st.z - a.z) < RULES.reach) return this.config.mission === 'vending' ? 'GRAB: buy chips (loud!)' : 'GRAB: take it';
+    for (const f of this.plan.furniture) {
+      if (!f.tags.includes('hide')) continue;
+      const p = hideFront(f);
+      if (Math.hypot(st.x - p.x, st.z - p.z) < HIDE.reach) return `GRAB: hide in the ${f.kind === 'locker' ? 'locker' : f.kind === 'stall' ? 'stall' : 'bleachers'}`;
+    }
+    if (st.carry < THROW.maxCarry) {
+      for (let k = 0; k < this.plan.furniture.length; k++) {
+        const f = this.plan.furniture[k]!;
+        if (s.usedThrowables[k] || !f.tags.includes('throwables')) continue;
+        const rx = Math.max(Math.abs(st.x - f.x) - f.w / 2, 0);
+        const rz = Math.max(Math.abs(st.z - f.z) - f.d / 2, 0);
+        if (rx * rx + rz * rz < THROW.reach * THROW.reach) return 'GRAB: pick up an eraser';
+      }
+    }
+    return null;
   }
 
   // ── debug hooks (window.__HP__) ──
@@ -318,6 +403,7 @@ export class App {
 
   dispose(): void {
     cancelAnimationFrame(this.raf);
+    this.worker?.terminate();
     this.input.dispose();
     this.view?.dispose();
     this.actors?.dispose();

@@ -3,13 +3,16 @@
 // generateSchool(config) → SchoolPlan. Pure and deterministic: the same
 // (seed, tier, mission) always gives the same plan, re-rolls included.
 // Steps: spine → branches → rooms (+ mission distance) → fine grid → furnishing →
-// staff → checks. Any failed step re-rolls the whole layout with the next
-// sub-seed; after MAX_TRIES the tier's fallback seed is used.
-// Validation of a stealth route (step 8) is school/validate.ts (milestone M2).
+// staff + PA → checks → step 8, the fairness validator (school/validate.ts): a
+// school only ships when an unseen, unheard route fits the bell budget. A failed
+// validation re-rolls the staff and PA (up to STAFF_TRIES), a failed layout step
+// re-rolls the layout; total validations are capped (VALIDATION_BUDGET), then the
+// tier's fallback seed is used.
 // ─────────────────────────────────────────────────────────────────────────────
 import { Rng, hashInts } from '../../core/rng';
 import { BELL_SECONDS, TIERS } from '../tiers';
-import type { MissionId, PaEvent, PaEventId, Room, SchoolPlan, StaffSpawn, TierId } from '../types';
+import type { Difficulty, MissionId, PaEvent, PaEventId, Room, SchoolPlan, StaffSpawn, TierId } from '../types';
+import { validatePlan } from '../validate';
 import { buildFine, floodOpen } from './fine';
 import { furnish } from './furnish';
 import { buildSpine, growBranches, newLayout, placeRooms } from './layout';
@@ -20,9 +23,15 @@ export interface GenConfig {
   seed: number;
   tier: TierId;
   mission: MissionId;
+  /** Validate for this difficulty (staff speed and clearance differ). Default 'junior'. */
+  difficulty?: Difficulty;
+  /** Run the fairness validator (default true). Layout-only tests turn it off. */
+  validate?: boolean;
 }
 
 const MAX_TRIES = 32;
+const STAFF_TRIES = 4;
+const VALIDATION_BUDGET = 8;
 
 /** Why attempts failed (diagnostics only: tools/plan.mjs and tests read it; never affects a plan). */
 export const GEN_FAILS: Record<string, number> = {};
@@ -41,19 +50,30 @@ const SYS_NAME = 0x5c4005;
 const SYS_PA = 0x5c4006;
 
 export function generateSchool(config: GenConfig): SchoolPlan {
-  for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
-    const plan = tryGenerate(config, attempt);
-    if (plan) return plan;
+  const budget = { left: VALIDATION_BUDGET };
+  let unvalidated: SchoolPlan | null = null;
+  for (let attempt = 0; attempt < MAX_TRIES && budget.left > 0; attempt++) {
+    const plan = tryGenerate(config, attempt, budget);
+    if (plan && plan.referenceRoute) return plan;
+    if (plan && config.validate === false) return plan;
+    if (plan && !unvalidated) unvalidated = plan;
   }
   const fb = FALLBACK_SEEDS[config.tier];
-  for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
-    const plan = tryGenerate({ ...config, seed: fb }, attempt);
-    if (plan) return { ...plan, seed: config.seed, fallback: true };
+  const fbBudget = { left: VALIDATION_BUDGET };
+  for (let attempt = 0; attempt < MAX_TRIES && fbBudget.left > 0; attempt++) {
+    const plan = tryGenerate({ ...config, seed: fb }, attempt, fbBudget);
+    if (plan && (plan.referenceRoute || config.validate === false)) return { ...plan, seed: config.seed, fallback: true };
   }
+  // Nothing validated: ship the first playable layout (still reachability-checked), flagged, with no route.
+  if (unvalidated) return { ...unvalidated, fallback: true };
   throw new Error(`generateSchool: tier ${config.tier} fallback seed failed`);
 }
 
-function tryGenerate(config: GenConfig, attempt: number): SchoolPlan | null {
+/**
+ * One layout attempt. Returns the validated plan, an unvalidated plan (validation off, or every staff re-roll
+ * failed — `referenceRoute` null), or null when a layout step failed.
+ */
+function tryGenerate(config: GenConfig, attempt: number, budget: { left: number }): SchoolPlan | null {
   const tier = TIERS[config.tier];
   const sub = (sys: number): Rng => new Rng(hashInts(config.seed, attempt, sys));
   const rngL = sub(SYS_LAYOUT);
@@ -69,9 +89,8 @@ function tryGenerate(config: GenConfig, attempt: number): SchoolPlan | null {
   const f = furnish(l, rooms, fine, tier, config.mission, sub(SYS_FURNISH));
   if (!f) return fail('furnish');
   const start = f.anchors.start!;
-  const staff = placeStaff(l, rooms, tier, start, bellTicks, sub(SYS_STAFF));
 
-  // Every door, goal, checkpoint and walking staff stop must be reachable from your desk.
+  // Every door and goal must be reachable from your desk.
   const reach = floodOpen(fine, start.x, start.z);
   const reachable = (x: number, z: number): boolean => {
     const c = Math.floor(x / 0.5);
@@ -87,35 +106,51 @@ function tryGenerate(config: GenConfig, attempt: number): SchoolPlan | null {
     }
   }
   for (const [id, a] of Object.entries(f.anchors)) if (a && !reachable(a.x, a.z)) return fail(`anchor:${id}`);
-  for (const s of staff) {
-    if (s.archetype === 'sweeper') continue;
-    for (const w of s.route) if (!reachable(w.x, w.z)) return fail(`staff:${s.archetype}`);
-  }
 
   const names = schoolName(config.tier, sub(SYS_NAME));
-  return {
-    seed: config.seed,
-    tier: config.tier,
-    mission: config.mission,
-    name: names.name,
-    motto: names.motto,
-    grid: { cols: l.cols, rows: l.rows },
-    cells: l.cells,
-    fine,
-    rooms,
-    furniture: f.furniture,
-    zones: f.zones,
-    anchors: f.anchors,
-    staff,
-    extras: [],
-    snacks: [],
-    throwables: [],
-    pa: schedulePa(config.tier, staff, rooms, bellTicks, sub(SYS_PA)),
-    bellTicks,
-    rerolls: attempt,
-    fallback: false,
-    referenceRoute: null,
-  };
+  let first: SchoolPlan | null = null;
+  for (let s = 0; s < STAFF_TRIES; s++) {
+    const salt = s * 7919;
+    const staff = placeStaff(l, rooms, tier, f.anchors, bellTicks, sub(SYS_STAFF + salt));
+    if (staff.some((sp) => sp.archetype !== 'sweeper' && sp.route.some((w) => !reachable(w.x, w.z)))) {
+      fail('staff:unreachable');
+      continue;
+    }
+    const plan: SchoolPlan = {
+      seed: config.seed,
+      tier: config.tier,
+      mission: config.mission,
+      name: names.name,
+      motto: names.motto,
+      grid: { cols: l.cols, rows: l.rows },
+      cells: l.cells,
+      fine,
+      rooms,
+      furniture: f.furniture,
+      zones: f.zones,
+      anchors: f.anchors,
+      staff,
+      extras: [],
+      snacks: [],
+      throwables: [],
+      pa: schedulePa(config.tier, staff, rooms, bellTicks, sub(SYS_PA + salt)),
+      bellTicks,
+      rerolls: attempt * STAFF_TRIES + s,
+      fallback: false,
+      referenceRoute: null,
+    };
+    if (config.validate === false) return plan;
+    first ??= plan;
+    if (budget.left <= 0) break;
+    budget.left--;
+    const v = validatePlan(plan, config.difficulty ?? 'junior');
+    if (v.ok) {
+      plan.referenceRoute = v.route;
+      return plan;
+    }
+    fail(`validate:${v.reason}`);
+  }
+  return first;
 }
 
 /** FNV-1a over the plan's gameplay-relevant content (determinism tests, challenge-code checks). */

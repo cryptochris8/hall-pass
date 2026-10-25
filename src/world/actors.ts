@@ -225,6 +225,31 @@ export function buildActors(plan: SchoolPlan, opts: { shadows: boolean }): Actor
             s.level = e.level;
             break;
           }
+          case 'chase': {
+            const p = staff[e.staff]?.person;
+            if (p && e.on) {
+              p.play(plan.staff[e.staff]!.archetype === 'patroller' ? 'whistle' : 'point');
+              p.setExpression('stern', 3);
+            } else if (p && e.escaped) {
+              p.play('shrug');
+              p.setExpression('neutral');
+            }
+            break;
+          }
+          case 'heard': {
+            const p = staff[e.staff]?.person;
+            if (p) {
+              p.setExpression('suspicious', 2.5);
+              p.play('lookAround');
+            }
+            break;
+          }
+          case 'hide':
+            if (e.enter) me.setExpression('nervous', 1.5);
+            break;
+          case 'throw':
+            me.play('wave');
+            break;
           case 'closeCall':
             me.play('flinch');
             me.setExpression('nervous', 1.2);
@@ -253,7 +278,7 @@ export function buildActors(plan: SchoolPlan, opts: { shadows: boolean }): Actor
       sLastX = x;
       sLastZ = z;
       me.update(dt);
-      student.visible = st.escort === 0 || frame % 8 < 4;
+      student.visible = st.hidden < 0 && (st.escort === 0 || frame % 8 < 4);
       focus.set(x, 0, z);
       const rebuild = frame % 2 === 0;
       state.staff.forEach((s, i) => {
@@ -269,7 +294,7 @@ export function buildActors(plan: SchoolPlan, opts: { shadows: boolean }): Actor
           a.person.setLook(wrap(look - yaw));
           if (dt > 0) {
             const spd = Number.isNaN(a.lastX) ? 0 : Math.hypot(px - a.lastX, pz - a.lastZ) / dt;
-            a.person.setMotion(Math.min(spd, 6), 'walk');
+            a.person.setMotion(Math.min(spd, 6), s.mode === 'chase' || s.mode === 'report' ? 'sprint' : 'walk');
             // Patrollers check their watch when they stop at the end of a beat.
             if (a.wasMoving && !s.moving && plan.staff[i]!.archetype === 'patroller' && s.level === 'calm') a.person.play('checkWatch');
           }

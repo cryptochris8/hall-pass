@@ -4,7 +4,7 @@
 import type { Rng } from '../../core/rng';
 import { PI, yawOf } from '../../core/fmath';
 import type { TierDef } from '../tiers';
-import { CELL, CELL_CORRIDOR, type Anchor, type Archetype, type Room, type StaffSpawn, type Waypoint } from '../types';
+import { CELL, CELL_CORRIDOR, type Anchor, type AnchorId, type Archetype, type Room, type StaffSpawn, type Waypoint } from '../types';
 import { cellAt, cellCentre, corridorDistances, type Layout } from './layout';
 
 const DEG = PI / 180;
@@ -25,7 +25,8 @@ export const STAFF_DEFAULTS: Readonly<Record<Archetype, { speed: number; range: 
   patroller: { speed: 1.2, range: 9, half: 30 * DEG, eye: 1.6 },
   sentry: { speed: 1.0, range: 9, half: 35 * DEG, eye: 1.6 },
   investigator: { speed: 1.6, range: 10, half: 35 * DEG, eye: 1.6 },
-  sweeper: { speed: 0, range: 10, half: 25 * DEG, eye: 2.7 },
+  // Cameras watch a junction, not a whole hall: short, narrow, with a wide slow sweep that leaves real gaps.
+  sweeper: { speed: 0, range: 7.5, half: 20 * DEG, eye: 2.7 },
   wanderer: { speed: 0.9, range: 7, half: 40 * DEG, eye: 1.6 },
   snitch: { speed: 1.3, range: 7, half: 40 * DEG, eye: 1.5 },
   listener: { speed: 0, range: 0, half: 0, eye: 1.6 },
@@ -160,7 +161,7 @@ function wanderRoute(l: Layout, rng: Rng, speed: number, bellTicks: number): Way
   return pts;
 }
 
-export function placeStaff(l: Layout, rooms: Room[], tier: TierDef, start: Anchor, bellTicks: number, rng: Rng): StaffSpawn[] {
+export function placeStaff(l: Layout, rooms: Room[], tier: TierDef, anchors: Partial<Record<AnchorId, Anchor>>, bellTicks: number, rng: Rng): StaffSpawn[] {
   const out: StaffSpawn[] = [];
   const startRoom = rooms.find((r) => r.tags.includes('start'))!;
   const startCell = doorCell(l, startRoom);
@@ -205,7 +206,14 @@ export function placeStaff(l: Layout, rooms: Room[], tier: TierDef, start: Ancho
   }
 
   // Cameras: at corridor dead ends and corners, looking down the hall.
-  const spots = corridorCells(l).filter((i) => neighbours(l, i).length !== 2 || isCorner(l, i));
+  // Never on the halls right outside your classroom or next to the goal (2 corridor cells either way).
+  const nearStart = corridorDistances(l, startCell % l.cols, Math.floor(startCell / l.cols));
+  const goals = (['goal', 'goal2', 'goal3'] as const).map((g) => anchors[g]).filter((a): a is Anchor => !!a);
+  const goalCells = goals.map((a) => nearestCorridor(l, a.x, a.z)).filter((i) => i >= 0);
+  const nearGoal = goalCells.map((g) => corridorDistances(l, g % l.cols, Math.floor(g / l.cols)));
+  const spots = corridorCells(l).filter(
+    (i) => (neighbours(l, i).length !== 2 || isCorner(l, i)) && !(nearStart[i]! >= 0 && nearStart[i]! <= 2) && !nearGoal.some((d) => d[i]! >= 0 && d[i]! <= 2),
+  );
   for (let k = 0; k < want('sweeper') && spots.length > 0; k++) {
     const i = spots.splice(rng.int(0, spots.length - 1), 1)[0]!;
     // Watch along a hall whose opposite side is a wall, so the camera can hang on it.
@@ -222,7 +230,7 @@ export function placeStaff(l: Layout, rooms: Room[], tier: TierDef, start: Ancho
     const dz = Math.sign(q.z - p.z);
     const x = p.x - dx * 2.2;
     const z = p.z - dz * 2.2;
-    out.push(spawn('sweeper', k, [{ x, z, dwell: 1 << 30, look: yawOf(dx, dz), sweep: 0.75 }], true, rng));
+    out.push(spawn('sweeper', k, [{ x, z, dwell: 1 << 30, look: yawOf(dx, dz), sweep: 1.0 }], true, rng));
   }
 
   for (let k = 0; k < want('wanderer'); k++) out.push(spawn('wanderer', k, wanderRoute(l, rng, STAFF_DEFAULTS.wanderer.speed, bellTicks), false, rng));
@@ -248,4 +256,20 @@ function inGrid(l: Layout, i: number, j: number): boolean {
   const o = 2 * i - j;
   if (o < 0 || o >= l.cells.length) return false;
   return Math.abs(i - j) === 1 ? Math.floor(o / l.cols) === Math.floor(i / l.cols) : true;
+}
+
+/** Corridor cell nearest a point (straight-line, by cell centre), or −1. */
+function nearestCorridor(l: Layout, x: number, z: number): number {
+  let best = -1;
+  let bd = Infinity;
+  for (let i = 0; i < l.cells.length; i++) {
+    if (l.cells[i] !== CELL_CORRIDOR) continue;
+    const p = cellCentre(i % l.cols, Math.floor(i / l.cols));
+    const d = (p.x - x) * (p.x - x) + (p.z - z) * (p.z - z);
+    if (d < bd) {
+      bd = d;
+      best = i;
+    }
+  }
+  return best;
 }

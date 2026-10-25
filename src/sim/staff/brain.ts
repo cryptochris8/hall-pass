@@ -45,10 +45,17 @@ export function moveAlong(st: StaffState, plan: SchoolPlan, spawn: StaffSpawn, s
     const dx = wx - st.x;
     const dz = wz - st.z;
     const d = Math.sqrt(dx * dx + dz * dz);
+    const last = (st.pathI + 1) * 2 >= st.path.length;
     if (d <= step) {
       st.x = wx;
       st.z = wz;
       step -= d;
+      st.pathI++;
+      continue;
+    }
+    // Intermediate waypoints count as reached within 20 cm: steering at a point you're sliding past (walls nudge
+    // bodies a few cm off the path) would swing the heading — and the head with it — sideways.
+    if (!last && d < 0.2) {
       st.pathI++;
       continue;
     }

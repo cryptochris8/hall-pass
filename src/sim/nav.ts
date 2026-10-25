@@ -28,8 +28,36 @@ function buffers(fine: FineGrid): Scratch {
   return s;
 }
 
-export function openAt(fine: FineGrid, c: number, r: number): boolean {
+function freeAt(fine: FineGrid, c: number, r: number): boolean {
   return c >= 0 && r >= 0 && c < fine.cols && r < fine.rows && (fine.flags[r * fine.cols + c]! & BLOCK) === 0;
+}
+
+/**
+ * Passable for a body (~0.6 m wide): the cell is free and not pinched between blocked cells on both opposite sides
+ * (a one-cell, 0.5 m gap is too narrow). Shared by staff pathfinding, the validator and the bot.
+ */
+export function openAt(fine: FineGrid, c: number, r: number): boolean {
+  if (!freeAt(fine, c, r)) return false;
+  if (!freeAt(fine, c - 1, r) && !freeAt(fine, c + 1, r)) return false;
+  if (!freeAt(fine, c, r - 1) && !freeAt(fine, c, r + 1)) return false;
+  return true;
+}
+
+/**
+ * Can a body (~0.6 m) step from cell (c, r) to its neighbour (c + dc, r + dr)? A straight step is blocked when both
+ * of its sides are blocked anywhere along it (that includes the diagonal pinch between two desks' corners). A
+ * diagonal step needs both straight legs and both orders of them to be possible.
+ */
+export function canStep(fine: FineGrid, c: number, r: number, dc: number, dr: number): boolean {
+  if (!openAt(fine, c + dc, r + dr)) return false;
+  if (dc !== 0 && dr !== 0) {
+    return canStep(fine, c, r, dc, 0) && canStep(fine, c, r, 0, dr) && canStep(fine, c + dc, r, 0, dr) && canStep(fine, c, r + dr, dc, 0);
+  }
+  const pc = dr !== 0 ? 1 : 0;
+  const pr = dc !== 0 ? 1 : 0;
+  const left = !freeAt(fine, c - pc, r - pr) || !freeAt(fine, c + dc - pc, r + dr - pr);
+  const right = !freeAt(fine, c + pc, r + pr) || !freeAt(fine, c + dc + pc, r + dr + pr);
+  return !(left && right);
 }
 
 /** Nearest open cell to (x, z) within `maxR` cells (ring search), or −1. */
@@ -143,8 +171,7 @@ export function findPath(fine: FineGrid, sx: number, sz: number, gx: number, gz:
         if (dr === 0 && dc === 0) continue;
         const nc = cc + dc;
         const nr = cr + dr;
-        if (!openAt(fine, nc, nr)) continue;
-        if (dr !== 0 && dc !== 0 && (!openAt(fine, cc + dc, cr) || !openAt(fine, cc, cr + dr))) continue;
+        if (!canStep(fine, cc, cr, dc, dr)) continue;
         const n = nr * cols + nc;
         if (b.closed[n] === gen) continue;
         const g = b.g[cur]! + (dr !== 0 && dc !== 0 ? SQRT2 : 1);

@@ -366,9 +366,11 @@ export function furnish(l: Layout, rooms: Room[], fine: FineGrid, tier: TierDef,
     if (!s) return null;
     anchors.goal = lockerBank(ctx, s, rng, { goal: true });
   } else if (mission === 'principal') {
-    // Third phone: in the far classroom's teacher desk.
-    const far = farthestRoom(rooms, anchors.start, 'classroom');
-    if (!far || !anchors.goal || !anchors.goal2) return null;
+    // Third phone: in the classroom nearest the principal's office (the finale is a raid on the office wing, not
+    // three trips across the school).
+    if (!anchors.goal || !anchors.goal2) return null;
+    const far = nearestRoom(rooms, anchors.goal, 'classroom');
+    if (!far) return null;
     const b = interior(far);
     anchors.goal3 = { x: (b.x0 + b.x1) / 2, z: (b.z0 + b.z1) / 2, yaw: 0 };
   }
@@ -408,21 +410,6 @@ export function furnish(l: Layout, rooms: Room[], fine: FineGrid, tier: TierDef,
   return { furniture: ctx.furniture, anchors, zones };
 }
 
-function farthestRoom(rooms: Room[], from: Anchor, kind: Room['kind']): Room | null {
-  let best: Room | null = null;
-  let bd = -1;
-  for (const r of rooms) {
-    if (r.kind !== kind || r.tags.includes('start')) continue;
-    const x = ((r.rect.c0 + r.rect.c1) / 2) * CELL;
-    const z = ((r.rect.r0 + r.rect.r1) / 2) * CELL;
-    const d = Math.abs(x - from.x) + Math.abs(z - from.z);
-    if (d > bd) {
-      bd = d;
-      best = r;
-    }
-  }
-  return best;
-}
 
 /** Centre of the open fine cell nearest (x, z), searching rings out to `maxR` metres. */
 function nearestOpen(fine: FineGrid, x: number, z: number, maxR: number): { x: number; z: number } | null {
@@ -451,4 +438,20 @@ function nearestOpen(fine: FineGrid, x: number, z: number, maxR: number): { x: n
     if (best) return best;
   }
   return null;
+}
+
+function nearestRoom(rooms: Room[], from: Anchor, kind: Room['kind']): Room | null {
+  let best: Room | null = null;
+  let bd = Infinity;
+  for (const r of rooms) {
+    if (r.kind !== kind || r.tags.includes('start')) continue;
+    const x = ((r.rect.c0 + r.rect.c1) / 2) * CELL;
+    const z = ((r.rect.r0 + r.rect.r1) / 2) * CELL;
+    const d = Math.abs(x - from.x) + Math.abs(z - from.z);
+    if (d < bd) {
+      bd = d;
+      best = r;
+    }
+  }
+  return best;
 }

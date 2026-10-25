@@ -108,7 +108,7 @@ export const SWEEP_PERIOD: Readonly<Record<Archetype, number>> = {
   patroller: 3,
   sentry: 5,
   investigator: 3,
-  sweeper: 8,
+  sweeper: 10,
   wanderer: 4,
   snitch: 3,
   listener: 6,

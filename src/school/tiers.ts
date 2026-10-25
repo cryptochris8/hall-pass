@@ -108,7 +108,7 @@ export const BELL_SECONDS: Readonly<Record<MissionId, number>> = {
   pizza: 150,
   locker: 180,
   gym: 180,
-  principal: 240,
+  principal: 270,
 };
 
 /** Room footprint in cells (w × h before rotation). */

@@ -36,6 +36,11 @@ export interface HudModel {
   difficulty: Difficulty;
   camera: CameraSettings;
   stats: string;
+  /** What GRAB does right now, or null. */
+  prompt: string | null;
+  carry: number;
+  hidden: boolean;
+  chased: boolean;
 }
 
 const MISSION_NAME: Record<MissionId, string> = {
@@ -82,6 +87,14 @@ const CSS = `
 .hp-mark { position: absolute; transform: translate(-50%, -100%); font: 900 26px/1 system-ui, sans-serif;
   text-shadow: 0 2px 0 #1d2433, 0 0 6px #1d2433; }
 .hp-mark.hp-curious { color: #ffd34d; } .hp-mark.hp-searching { color: #ff9a2e; } .hp-mark.hp-spotted { color: #ff3b3b; }
+.hp-prompt { position: absolute; left: 50%; bottom: calc(max(10px, env(safe-area-inset-bottom)) + 34px); transform: translateX(-50%);
+  background: rgba(29,36,51,.85); padding: 6px 12px; border-radius: 10px; font-weight: 700; white-space: nowrap; }
+.hp-state { position: absolute; left: max(12px, env(safe-area-inset-left)); top: calc(max(10px, env(safe-area-inset-top)) + 56px);
+  display: flex; gap: 6px; flex-wrap: wrap; }
+.hp-state span { background: rgba(29,36,51,.8); padding: 3px 8px; border-radius: 8px; font-size: 12px; font-weight: 700; }
+.hp-state .hp-chase { background: #c8372d; }
+.hp-state .hp-hidden { background: #2e6b52; }
+@media (pointer: coarse) { .hp-prompt { bottom: auto; top: calc(max(10px, env(safe-area-inset-top)) + 56px); } }
 .hp-hint { position: absolute; left: 50%; bottom: max(10px, env(safe-area-inset-bottom)); transform: translateX(-50%);
   background: rgba(29,36,51,.6); padding: 4px 10px; border-radius: 8px; font-weight: 500; font-size: 12px; white-space: nowrap; }
 @media (pointer: coarse) { .hp-hint { display: none; } }
@@ -114,6 +127,9 @@ export class Hud {
   private readonly vals = new Map<string, HTMLSpanElement>();
   private readonly toggles: { key: string; value: string; btn: HTMLButtonElement }[] = [];
   private bannerTap: (() => void) | null = null;
+  private readonly prompt: HTMLDivElement;
+  private readonly state: HTMLDivElement;
+  private stateKey = '';
   private model: HudModel | null = null;
 
   constructor(app: HTMLElement, private readonly actions: HudActions) {
@@ -136,7 +152,10 @@ export class Hud {
     this.banner = el('div', 'hp-banner', this.root);
     this.banner.hidden = true;
     this.banner.addEventListener('click', () => this.bannerTap?.());
-    el('div', 'hp-hint', this.root, 'WASD / arrows move · hold E sneak · hold Shift sprint · Space grab · Esc tuning');
+    this.prompt = el('div', 'hp-prompt', this.root);
+    this.prompt.hidden = true;
+    this.state = el('div', 'hp-state', this.root);
+    el('div', 'hp-hint', this.root, 'WASD move · hold C sneak · hold Shift sprint · Space grab / hide · E throw · Esc tuning');
   }
 
   get panelOpen(): boolean {
@@ -203,6 +222,16 @@ export class Hud {
     this.mission.textContent = `${MISSION_NAME[model.mission]} · ${model.missionLine}`;
     this.missionSub.textContent = `${model.school} · hall passes ${passes} · busted ${model.catches}/3`;
     this.mission.appendChild(this.missionSub);
+    this.prompt.hidden = model.prompt === null;
+    if (model.prompt !== null && this.prompt.textContent !== model.prompt) this.prompt.textContent = model.prompt;
+    const key = `${model.carry}|${model.hidden}|${model.chased}`;
+    if (key !== this.stateKey) {
+      this.stateKey = key;
+      this.state.textContent = '';
+      if (model.chased) el('span', 'hp-chase', this.state, 'CHASED! Break line of sight');
+      if (model.hidden) el('span', 'hp-hidden', this.state, 'HIDDEN');
+      if (model.carry > 0) el('span', '', this.state, `Erasers ×${model.carry} (E to throw)`);
+    }
     if (!this.panel.hidden) {
       this.vals.get('seed')!.textContent = String(model.seed);
       this.vals.get('pitch')!.textContent = String(model.camera.pitch);

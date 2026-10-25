@@ -223,7 +223,7 @@ describe('PA announcements', () => {
     let errands = 0;
     for (let seed = 0; seed < 30; seed++) {
       const config: RunConfig = { seed, mission: 'phone', tier: 3, difficulty: 'junior', daily: null };
-      const plan = generateSchool(config);
+      const plan = generateSchool({ ...config, validate: false });
       expect(plan.pa.length).toBeGreaterThanOrEqual(1);
       expect(plan.pa.every((p, k) => k === 0 || p.tick > plan.pa[k - 1]!.tick)).toBe(true);
       const s = createSim(plan, config, { absent: true });

@@ -60,6 +60,7 @@ export function moveStudent(fine: FineGrid, s: StudentState, input: TickInput): 
   const wantsSprint = (input.buttons & BTN_SPRINT) !== 0 && mag > 0.2;
   const sneaking = (input.buttons & BTN_SNEAK) !== 0 || (mag > 0 && mag < STUDENT.sneakTilt);
   if (wantsSprint && (s.posture === 'sprint' ? s.stamina > 0 : s.stamina >= STUDENT.sprintMin)) s.posture = 'sprint';
+  else if (mag === 0 && s.posture === 'sneak') s.posture = 'sneak'; // letting go mid-sneak stays silent while you stop
   else s.posture = sneaking ? 'sneak' : 'walk';
   if (s.posture === 'sprint') s.stamina = Math.max(0, s.stamina - SIM_DT / STUDENT.sprintSeconds);
   else s.stamina = Math.min(1, s.stamina + SIM_DT / STUDENT.refillSeconds);

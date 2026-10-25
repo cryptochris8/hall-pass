@@ -6,7 +6,7 @@
   "engines": {
     "node": ">=22.12"
   },
-  "description": "HALL PASS — Three minutes until the bell. No hall pass. A procedural 3D stealth arcade game for the browser.",
+  "description": "HALL PASS \u2014 Three minutes until the bell. No hall pass. A procedural 3D stealth arcade game for the browser.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
@@ -15,7 +15,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "plan": "node tools/plan.mjs"
+    "plan": "node tools/plan.mjs",
+    "test:balance": "BALANCE=1 vitest run tests/balance"
   },
   "dependencies": {
     "three": "^0.186.0"
