@@ -2,7 +2,7 @@
 //
 // URL params (docs/ARCHITECTURE.md §14): ?seed=N, ?tier=1..5, ?mission=phone|vending|pizza|locker|gym|principal,
 //   ?difficulty=freshman|junior|senior, ?quality=auto|high|low, ?test=1 (window.__HP__ in production builds),
-//   grey-box camera: ?pitch=55&dist=17&fov=40&walls=cutaway|low|full&cones=0|1.
+//   grey-box camera: ?pitch=55&dist=17&fov=40&walls=occlude|cutaway|low|full&cones=0|1.
 import { App, type AppParams } from './game/app';
 import { installDebugHooks } from './game/debug';
 import type { Quality } from './render/types';
@@ -29,7 +29,7 @@ function parseParams(search: string): AppParams {
   if (pitch !== null) camera.pitch = Math.min(85, Math.max(30, pitch));
   if (dist !== null) camera.distance = Math.min(40, Math.max(8, dist));
   if (fov !== null) camera.fov = Math.min(70, Math.max(20, fov));
-  if (walls === 'cutaway' || walls === 'low' || walls === 'full') camera.walls = walls as WallMode;
+  if (walls === 'occlude' || walls === 'cutaway' || walls === 'low' || walls === 'full') camera.walls = walls as WallMode;
   if (q.get('cones') === '0') camera.cones = false;
   return {
     seed: seed !== null ? Math.floor(seed) >>> 0 : null,

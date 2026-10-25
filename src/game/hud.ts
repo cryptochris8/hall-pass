@@ -180,10 +180,17 @@ export class Hud {
     this.choice('School tier', 'tier', ['1', '2', '3', '4', '5'], (v) => v, (v) => this.actions.newRun({ tier: Number(v) as TierId }));
     this.choice('Mission', 'mission', MISSION_IDS, (v) => MISSION_NAME[v as MissionId], (v) => this.actions.newRun({ mission: v as MissionId }));
     this.choice('Difficulty', 'difficulty', DIFFICULTIES, (v) => v.toUpperCase(), (v) => this.actions.newRun({ difficulty: v as Difficulty }));
+    const presets: Record<string, Partial<CameraSettings>> = {
+      'Close (Trash Panda)': { pitch: 46, distance: 12, fov: 48 },
+      Mid: { pitch: 52, distance: 18, fov: 45 },
+      Tactical: { pitch: 60, distance: 28, fov: 40 },
+    };
+    const pr = this.row('Camera preset');
+    for (const [name, c] of Object.entries(presets)) el('button', '', pr, name).addEventListener('click', () => this.actions.camera(c));
     this.stepper('Camera pitch (°)', 'pitch', (d) => this.actions.camera({ pitch: Math.min(85, Math.max(30, m().camera.pitch + d * 5)) }));
     this.stepper('Camera distance (m)', 'distance', (d) => this.actions.camera({ distance: Math.min(40, Math.max(8, m().camera.distance + d * 2)) }));
     this.stepper('Field of view (°)', 'fov', (d) => this.actions.camera({ fov: Math.min(70, Math.max(20, m().camera.fov + d * 5)) }));
-    this.choice('Walls', 'walls', ['cutaway', 'low', 'full'], (v) => v, (v) => this.actions.camera({ walls: v as WallMode }));
+    this.choice('Walls', 'walls', ['occlude', 'cutaway', 'low', 'full'], (v) => v, (v) => this.actions.camera({ walls: v as WallMode }));
     this.choice('Vision cones', 'cones', ['on', 'off'], (v) => v, (v) => this.actions.camera({ cones: v === 'on' }));
   }
 

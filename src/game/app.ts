@@ -19,7 +19,7 @@ import { generateSchool } from '../school/gen';
 import type { Difficulty, MissionId, SchoolPlan, TierId } from '../school/types';
 import { createSim, missionGoals, step, BTN_INTERACT, BTN_SNEAK, BTN_SPRINT, SIM_DT, type RunConfig, type SimEvent, type SimState, type TickInput } from '../sim';
 import { buildActors, takeSnapshot, type ActorsView, type Snapshot } from '../world/actors';
-import { buildSchoolView, type SchoolView } from '../world/school';
+import { buildSchoolView, type SchoolView, type ViewPoints } from '../world/school';
 import { renderDpr } from './device';
 import { Hud, missionName, type CameraSettings } from './hud';
 import { installViewport } from './viewport';
@@ -62,30 +62,34 @@ export class App {
   private paused = false;
   private ended = false;
   private readonly tick: TickInput = { moveX: 0, moveY: 0, buttons: 0 };
-  readonly camera: CameraSettings = { pitch: 60, distance: 28, fov: 40, walls: 'cutaway', cones: true };
+  readonly camera: CameraSettings = { pitch: 46, distance: 12, fov: 48, walls: 'occlude', cones: true };
   private readonly shadows: boolean;
   private readonly v = new THREE.Vector3();
   private readonly proj = { x: 0, y: 0, visible: false };
   private lastEvents: SimEvent[] = [];
   private readonly lead = new THREE.Vector2();
+  private readonly viewPts: ViewPoints = { camX: 0, camY: 0, camZ: 0, points: new Float32Array(3 * 16), count: 0 };
 
   constructor(private readonly root: HTMLElement, params: AppParams) {
     const quality = params.quality ?? 'auto';
     const touch = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
-    this.shadows = detailTier(quality, touch) === 'high';
+    // Shadows are the strongest depth cue; only an explicit ?quality=low turns them off (1024² map on phones).
+    this.shadows = quality !== 'low';
+    const bigShadows = detailTier(quality, touch) === 'high';
     this.renderer = new GameRenderer(root, quality);
     this.renderer.scene.background = new THREE.Color(PAL.skyTop);
     Object.assign(this.camera, params.camera);
 
-    const hemi = new THREE.HemisphereLight(PAL.hemiSky, PAL.hemiGround, 1.7);
-    const sun = new THREE.DirectionalLight(PAL.sun, 1.6);
+    // A strong low sun over a weaker fill: walls and people get a lit side, a shaded side and long shadows.
+    const hemi = new THREE.HemisphereLight(PAL.hemiSky, PAL.hemiGround, 1.05);
+    const sun = new THREE.DirectionalLight(PAL.sun, 2.4);
     sun.castShadow = this.shadows;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(bigShadows ? 2048 : 1024, bigShadows ? 2048 : 1024);
     const sc = sun.shadow.camera;
-    sc.left = -28;
-    sc.right = 28;
-    sc.top = 28;
-    sc.bottom = -28;
+    sc.left = -24;
+    sc.right = 24;
+    sc.top = 24;
+    sc.bottom = -24;
     sc.near = 1;
     sc.far = 120;
     sun.shadow.bias = -0.0006;
@@ -177,8 +181,13 @@ export class App {
     const alpha = this.paused || this.ended ? 1 : clamp(this.acc / SIM_DT, 0, 1);
     this.actors!.update(this.prev, this.sim, alpha, this.camera.cones);
     const f = this.actors!.focus;
-    this.view!.update(dt, f.x, f.z, this.camera.walls);
     this.placeCamera(false, dt);
+    const camPos = this.renderer.rig.camera.position;
+    this.viewPts.camX = camPos.x;
+    this.viewPts.camY = camPos.y;
+    this.viewPts.camZ = camPos.z;
+    this.actors!.viewPoints(this.viewPts, 16);
+    this.view!.update(dt, f.x, f.z, this.camera.walls, this.viewPts);
     this.renderer.render(dt);
     this.updateHud();
   }
@@ -203,7 +212,7 @@ export class App {
     // Sun follows the focus so the shadow map covers what's on screen.
     const sun = this.lights.sun;
     sun.target.position.set(tx, 0, tz);
-    sun.position.set(tx - 30, 38, tz + 18);
+    sun.position.set(tx - 26, 24, tz + 12);
   }
 
   private onEvents(ev: SimEvent[]): void {

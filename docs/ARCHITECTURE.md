@@ -2,7 +2,7 @@
 
 Stack: **Vite 8 + TypeScript 7 (strict) + Three.js 0.186**, no UI framework, no backend, static deploy (Netlify).
 Same proven format as MAILBOX MAYHEM (`C:\Users\chris\One-Shot`), TRASH PANDA TROUBLE (`C:\Users\chris\Trash-Panda`),
-ATHLETE MAYHEM (`C:\Users\chris\Athlete-Mayhem`) and BAD HAIR DAY! (`bad-har-day`). All four are **read-only
+ATHLETE MAYHEM (`C:\Users\chris\Athlete-Mayhem`) and BAD HAIR DAY! (`bad-har-day`); Trash Panda is on GitHub as `trash-panda`. All four are **read-only
 references: never edit them**. Copy and adapt code from them freely (§11 lists what comes from where).
 Everything is procedural: models are built in code (no GLB/GLTF/FBX/OBJ, no downloaded assets), audio is synthesized
 at runtime, schools are generated from a seed. Only shipped assets: fonts (`@fontsource/*`), favicon and icons.
@@ -218,13 +218,13 @@ export interface StaffBrain {
 
 - Metres, **Y up**, floor y = 0. The school grid starts at the origin and grows toward **+X (east)** and **+Z
   (south)**. Cell (i, j) covers x ∈ [8i, 8i + 8), z ∈ [8j, 8j + 8).
-- **Fixed-yaw cut-away camera** (from Bad Hair Day's dollhouse rig): it always looks from +Z toward −Z, pitch
-  `CUTAWAY_VIEW.pitchDeg` (≈ 55°), distance per quality and screen aspect, leading the student's velocity by up to
-  2 m and pulling out 15 % while hidden. **The camera never rotates**, so north is always up the screen and the
+- **Fixed-yaw camera**: it always looks from +Z toward −Z. Default framing is Trash Panda's playtested one (46° pitch,
+  12 m, FOV 48°), leading the student's velocity by up to 2 m; the phone test (GDD open question 1) picks the final
+  numbers, with Mid (52°, 18 m) and Tactical (60°, 28 m) presets to compare. **The camera never rotates**, so north is always up the screen and the
   minimap matches the view.
-- Walls between the camera and the focus drop to the cut height (`src/world/cutaway.ts`, adapted from Bad Hair Day to
-  take any `SchoolPlan` instead of the fixed house layout). Cut walls still block sight in the sim: the cut is
-  visual only.
+- Walls that stand between the camera and the student or a nearby staff member drop to a low height
+  (`src/world/school.ts`, 'occlude' mode; Bad Hair Day's whole-south-side cut-away remains as 'cutaway'). Lowered
+  walls still block sight in the sim: it's visual only.
 - **Characters face their local +Z**; `root.rotation.y = yaw` (0 faces the camera).
 - Screen-relative move input with the fixed camera: `worldX = moveX`, `worldZ = −moveY`.
 - Lighting is owned by the world: hemisphere + ONE shadow-casting key light (the low afternoon sun) + fake glows for
@@ -300,7 +300,8 @@ CSS class prefix **`hp-`** everywhere. User strings (the nickname, a pasted code
 | `people/*` | Bad Hair Day `family/*` | Teen proportions, staff outfits, LOCKER cosmetics; no long-hair rig |
 | `audio/*` incl. `babble.ts` | Bad Hair Day | New lo-fi stems; intensity layers driven by `suspicion` events |
 | `ui/*` (dom, focus, glyphs, hud, screens) | Bad Hair Day / Athlete Mayhem | New theme (§8) |
-| Stealth AI, alert meters, hide spots | Trash Panda Trouble | **Not reviewed** (repo not on GitHub). Read it before writing `sim/staff/*` and `sim/detect.ts`. |
+| Staff state machine, detection, hearing, hiding | Trash Panda Trouble `src/sim/enemies.ts`, `alert.ts`, `player.ts` | Reviewed 2026-10-25. Port the **logic** into `sim/staff/*` and `sim/detect.ts`, not the files: patrol → investigate → notice (a short warning beat before any chase) → chase (give-up timer, leash from home) → search last-known spot → return; a minimum fill rate; catch at close range even from behind; hidden unless within 1.5 m. Its sim uses variable dt and `Math.sin/atan2/hypot`, so everything is rewritten against §3 and the fine grid. |
+| Camera framing, occlusion fade | Trash Panda Trouble `src/render/camera/framing.ts`, `world/occlusion.ts` | Its playtested camera (46°, 11 m, FOV 48°) is the grey box's default; `world/school.ts` 'occlude' lowers only the walls that block the student or nearby staff (its fade-what-blocks idea). |
 | Fairness validator pattern, bot, headless bundle | Mailbox Mayhem `sim/fairness.ts`, bot; `game-generator/engines/mayhem-run/vite.headless.config.ts` | The time-expanded search is new |
 | `tools/shot.mjs`, `tools/walk.mjs` | Bad Hair Day | |
 

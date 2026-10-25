@@ -20,8 +20,10 @@ What works:
 - **Simulation** (`src/sim`): fixed 60 Hz, replays bit for bit (tested). Student movement and collision, sneak and
   sprint, route-following staff, vision cones blocked by walls (and by desks when you sneak), suspicion, the hall
   pass, BUSTED (walked back to your checkpoint, 10 s lost), DETENTION after 3 catches, mission pickups, the bell.
-- **Grey-box view** (`src/world`, `src/game`): the fixed-yaw cut-away camera, capsule people, cone decals drawn from
-  the same rays the sim tests, ?/! markers, a HUD and a tuning panel.
+- **Grey-box view** (`src/world`, `src/game`): Trash Panda's playtested camera (46°, 12 m, FOV 48°), walls that only
+  drop when they hide you or nearby staff, outlined walls and furniture, tiled floors, a low sun with long shadows,
+  stand-in figures with blob shadows, cone decals drawn from the same rays the sim tests, ?/! markers, a HUD and a
+  tuning panel with camera presets.
 
 Not yet (later milestones): the fairness validator and bot (M2); chasing, noise, hiding, distractions, PA
 announcements (M3); menus, Hall Report, SCHOOL WEEK, DAILY (M4); real art and audio (M5); share cards, codes, ghosts
@@ -43,7 +45,7 @@ tuning panel. Sneak sits on the secondary slot for now; the GDD's dedicated snea
 input changes in M3.
 
 URL params: `?seed=N&tier=1..5&mission=phone|vending|pizza|locker|gym|principal&difficulty=freshman|junior|senior`,
-camera `&pitch=60&dist=28&fov=40&walls=cutaway|low|full&cones=0`, `?quality=auto|high|low`, `?test=1` exposes
+camera `&pitch=46&dist=12&fov=48&walls=occlude|cutaway|low|full&cones=0`, `?quality=auto|high|low`, `?test=1` exposes
 `window.__HP__` in production builds.
 
 ## The phone test (GDD open question 1)
@@ -55,7 +57,8 @@ npm run dev -- --host  # prints a Network URL like http://192.168.1.20:5195
 ```
 
 Open that URL on your phone (same Wi-Fi), hold it in landscape and play. Try tier 4 (the academy, 11 staff).
-Open ⚙ to change the camera pitch, distance, field of view, wall mode (cut-away / low / full) and cones, live.
+Open ⚙ to switch camera presets (Close = Trash Panda's, Mid, Tactical) or change pitch, distance, field of view,
+wall mode (occlude / cut-away / low / full) and cones, live.
 Note the numbers that feel best.
 
 Screenshots: `node tools/shot.mjs "/?test=1&seed=11&tier=4" shots/x.png --mobile --w 844 --h 390`.

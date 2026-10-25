@@ -12,6 +12,7 @@ import { toon } from '../render/toon';
 import type { Archetype, SchoolPlan } from '../school/types';
 import { visibilityPolygon } from '../sim/detect';
 import type { SimState, SuspicionLevel } from '../sim/types';
+import type { ViewPoints } from './school';
 
 const RAYS = 28;
 
@@ -67,6 +68,8 @@ export interface ActorsView {
   readonly focus: THREE.Vector3;
   /** World point above each staff member's head (for ?/! markers). */
   headOf(i: number, out: THREE.Vector3): THREE.Vector3;
+  /** Points the occlusion pass keeps visible: the student, then staff within `radius` m of the student. */
+  viewPoints(out: ViewPoints, radius: number): void;
   update(prev: Snapshot, state: SimState, alpha: number, showCones: boolean): void;
   dispose(): void;
 }
@@ -75,45 +78,77 @@ export function buildActors(plan: SchoolPlan, opts: { shadows: boolean }): Actor
   const root = new THREE.Group();
   root.name = 'actors';
   const disposables: { dispose(): void }[] = [];
-  const capsule = new THREE.CapsuleGeometry(0.3, 1.0, 4, 10);
-  capsule.translate(0, 0.8, 0);
-  const visor = new THREE.BoxGeometry(0.32, 0.12, 0.22);
-  visor.translate(0, 1.45, 0.2);
+  // Stand-in figures: a body capsule, a head, an eye band showing where they look, an ink hull on each (back faces
+  // of a slightly bigger copy) and a soft blob shadow. Real characters arrive in M5.
+  const bodyGeo = new THREE.CapsuleGeometry(0.28, 0.75, 4, 12);
+  bodyGeo.translate(0, 0.66, 0);
+  const headGeo = new THREE.SphereGeometry(0.24, 16, 12);
+  headGeo.translate(0, 1.48, 0);
+  const inkBody = new THREE.CapsuleGeometry(0.31, 0.75, 4, 12);
+  inkBody.translate(0, 0.66, 0);
+  const inkHead = new THREE.SphereGeometry(0.27, 16, 12);
+  inkHead.translate(0, 1.48, 0);
+  const eyes = new THREE.BoxGeometry(0.3, 0.07, 0.08);
+  eyes.translate(0, 1.52, 0.2);
   const camBox = new THREE.BoxGeometry(0.34, 0.26, 0.5);
   camBox.translate(0, 0, 0.12);
+  const inkCam = new THREE.BoxGeometry(0.42, 0.34, 0.58);
+  inkCam.translate(0, 0, 0.12);
   const ring = new THREE.RingGeometry(0.42, 0.55, 32);
   ring.rotateX(-Math.PI / 2);
-  disposables.push(capsule, visor, camBox, ring);
+  const blob = new THREE.CircleGeometry(0.5, 20);
+  blob.rotateX(-Math.PI / 2);
+  disposables.push(bodyGeo, headGeo, inkBody, inkHead, eyes, camBox, inkCam, ring, blob);
+  const inkMat = new THREE.MeshBasicMaterial({ color: PAL.outline, side: THREE.BackSide });
+  const blobMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.28, depthWrite: false });
+  disposables.push(inkMat, blobMat);
+  const SKIN = [0xe8b48a, 0xc68c5e, 0x8d5a3b, 0xf1c8a4, 0xa86f4c];
+
+  const figure = (body: number, skin: number): { g: THREE.Group; body: THREE.Mesh; look: THREE.Group } => {
+    const g = new THREE.Group();
+    const b = new THREE.Mesh(bodyGeo, toon(body));
+    b.castShadow = opts.shadows;
+    const look = new THREE.Group();
+    const head = new THREE.Mesh(headGeo, toon(skin));
+    head.castShadow = opts.shadows;
+    look.add(head, new THREE.Mesh(inkHead, inkMat), new THREE.Mesh(eyes, toon(0x15171d)));
+    const shadow = new THREE.Mesh(blob, blobMat);
+    shadow.position.y = 0.02;
+    shadow.renderOrder = 1;
+    g.add(shadow, b, new THREE.Mesh(inkBody, inkMat), look);
+    return { g, body: b, look };
+  };
 
   // Student.
-  const student = new THREE.Group();
-  const sBody = new THREE.Mesh(capsule, toon(PAL.student));
-  sBody.castShadow = opts.shadows;
-  const sVisor = new THREE.Mesh(visor, toon(PAL.studentRing));
+  const me = figure(PAL.student, SKIN[0]!);
+  const student = me.g;
+  const sBody = me.body;
+  const sVisor = me.look;
   const ringMat = new THREE.MeshBasicMaterial({ color: PAL.studentRing, transparent: true, opacity: 0.85, depthWrite: false });
   disposables.push(ringMat);
   const sRing = new THREE.Mesh(ring, ringMat);
   sRing.position.y = 0.04;
-  student.add(sBody, sVisor, sRing);
+  student.add(sRing);
   root.add(student);
 
   // Staff + cones.
   const staff: { g: THREE.Group; head: THREE.Object3D; cone: THREE.Mesh | null; coneGeo: THREE.BufferGeometry | null; coneMat: THREE.MeshBasicMaterial | null }[] = [];
   const poly = new Float32Array(2 + 2 * (RAYS + 1));
-  plan.staff.forEach((sp) => {
-    const g = new THREE.Group();
+  plan.staff.forEach((sp, idx) => {
+    let g: THREE.Group;
     let head: THREE.Object3D;
     if (sp.archetype === 'sweeper') {
-      head = new THREE.Mesh(camBox, toon(PAL.sweeper));
+      g = new THREE.Group();
+      head = new THREE.Group();
+      const cam = new THREE.Mesh(camBox, toon(PAL.sweeper));
+      cam.castShadow = opts.shadows;
+      head.add(cam, new THREE.Mesh(inkCam, inkMat));
       head.position.y = sp.eye;
-      head.castShadow = opts.shadows;
       g.add(head);
     } else {
-      const body = new THREE.Mesh(capsule, toon(BODY[sp.archetype]));
-      body.castShadow = opts.shadows;
-      head = new THREE.Group();
-      head.add(new THREE.Mesh(visor, toon(0x111318)));
-      g.add(body, head);
+      const f = figure(BODY[sp.archetype], SKIN[(idx + 1) % SKIN.length]!);
+      g = f.g;
+      head = f.look;
     }
     let cone: THREE.Mesh | null = null;
     let coneGeo: THREE.BufferGeometry | null = null;
@@ -122,9 +157,9 @@ export function buildActors(plan: SchoolPlan, opts: { shadows: boolean }): Actor
       coneGeo = new THREE.BufferGeometry();
       const n = RAYS + 2;
       coneGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
-      const idx: number[] = [];
-      for (let k = 1; k <= RAYS; k++) idx.push(0, k + 1, k);
-      coneGeo.setIndex(idx);
+      const idx3: number[] = [];
+      for (let k = 1; k <= RAYS; k++) idx3.push(0, k + 1, k);
+      coneGeo.setIndex(idx3);
       coneMat = new THREE.MeshBasicMaterial({ color: PAL.cone, transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide });
       cone = new THREE.Mesh(coneGeo, coneMat);
       cone.frustumCulled = false;
@@ -145,6 +180,24 @@ export function buildActors(plan: SchoolPlan, opts: { shadows: boolean }): Actor
       const s = staff[i]!;
       return out.set(s.g.position.x, (plan.staff[i]!.archetype === 'sweeper' ? plan.staff[i]!.eye : 1.9) + 0.45, s.g.position.z);
     },
+    viewPoints(out, radius) {
+      const max = out.points.length / 3;
+      out.points[0] = focus.x;
+      out.points[1] = 1.0;
+      out.points[2] = focus.z;
+      let n = 1;
+      for (let i = 0; i < staff.length && n < max; i++) {
+        const p = staff[i]!.g.position;
+        const dx = p.x - focus.x;
+        const dz = p.z - focus.z;
+        if (dx * dx + dz * dz > radius * radius) continue;
+        out.points[n * 3] = p.x;
+        out.points[n * 3 + 1] = plan.staff[i]!.archetype === 'sweeper' ? plan.staff[i]!.eye : 1.3;
+        out.points[n * 3 + 2] = p.z;
+        n++;
+      }
+      out.count = n;
+    },
     update(prev, state, alpha, showCones) {
       frame++;
       const st = state.student;
@@ -153,7 +206,7 @@ export function buildActors(plan: SchoolPlan, opts: { shadows: boolean }): Actor
       student.position.set(x, 0, z);
       student.rotation.y = lerpAngle(prev.syaw, st.yaw, alpha);
       sBody.scale.y = st.posture === 'sneak' ? 0.72 : 1;
-      sVisor.position.y = st.posture === 'sneak' ? -0.42 : 0;
+      sVisor.position.y = st.posture === 'sneak' ? -0.46 : 0;
       student.visible = st.escort === 0 || frame % 8 < 4;
       focus.set(x, 0, z);
       const rebuild = frame % 2 === 0;
