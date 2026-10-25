@@ -430,8 +430,8 @@ export function blocksAny(b: { x0: number; z0: number; x1: number; z1: number; f
     const px = v.points[k * 3]!;
     const py = v.points[k * 3 + 1]!;
     const pz = v.points[k * 3 + 2]!;
-    // The point's own spot doesn't count (a person standing next to a wall isn't hidden by it).
-    if (px > x0 && px < x1 && pz > z0 && pz < z1) continue;
+    // A point inside the wall box itself (never happens for people; guards degenerate boxes) doesn't count.
+    if (px > b.x0 && px < b.x1 && pz > b.z0 && pz < b.z1) continue;
     const dx = v.camX - px;
     const dz = v.camZ - pz;
     let t0 = 0;
