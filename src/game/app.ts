@@ -20,6 +20,8 @@ import { hashInts } from '../core/rng';
 import { createInput, type InputManager } from '../input';
 import { GameRenderer, detailTier } from '../render/renderer';
 import { PAL } from '../render/palette';
+import { lookFor } from '../people';
+import type { PersonLook } from '../people/types';
 import type { Quality } from '../render/types';
 import { MISSION_IDS, planSize, type Difficulty, type MissionId, type SchoolPlan, type TierId } from '../school/types';
 import { createSim, hideFront, missionGoals, step, BTN_INTERACT, BTN_SNEAK, BTN_SPRINT, BTN_THROW, SIM_DT, SIM_HZ, type RunConfig, type SimEvent, type SimState, type TickInput } from '../sim';
@@ -39,6 +41,7 @@ import { buildSchoolView, type SchoolView, type ViewPoints, type WallMode } from
 import { installAudioUnlock } from './audioUnlock';
 import { renderDpr } from './device';
 import { Hud, type CameraSettings } from './hud';
+import { BACKPACK, HAIR_COLOUR, HAIR_STYLE, HOODIE, lockReason, nextXpUnlock, NICK_MAX, PANTS, sanitizeLook, sanitizeNickname, SKIN, SNEAKERS, unlocked, type Option } from './locker';
 import { civilDay, dailyConfig, dailyNumber, todayKey, unlocksNext, weekConfig, weekGrade, weekPlan, WEEKDAYS } from './modes';
 import { Schools, type BuiltSchool } from './schools';
 import { SoundDirector, type SoundScreen } from './sound';
@@ -120,6 +123,8 @@ export class App {
   private ghost: GhostRun | null = null;
   private reportScreen: ScreenSpec | null = null;
   private codeDraft = '';
+  /** LOCKER is open: the attract run holds still and the camera frames the student. */
+  private lockerOpen = false;
   private codeError: string | null = null;
   private readonly audio: AudioEngine;
   private readonly sound: SoundDirector;
@@ -312,9 +317,10 @@ export class App {
         { kind: 'button', label: 'SCHOOL WEEK', sub: weekSub, right: `School ${save.unlocked}/5`, onPick: () => this.showWeek() },
         { kind: 'button', label: 'QUICK PERIOD', sub: 'Random school · pick the mission and difficulty', onPick: () => this.showQuick() },
         { kind: 'button', label: 'CHALLENGE CODE', sub: "Play the exact run a friend played", onPick: () => this.showCode() },
+        { kind: 'button', label: 'LOCKER', sub: `Your look and nickname · ${save.totals.xp} XP`, onPick: () => this.showLocker() },
         { kind: 'button', label: 'RECORDS', sub: 'Best grades, streaks, weeks cleared', onPick: () => this.showRecords() },
-        { kind: 'button', label: 'HOW TO PLAY', onPick: () => this.showHelp(() => this.showMain(5)) },
-        { kind: 'button', label: 'SETTINGS', onPick: () => this.showSettings(() => this.showMain(6)) },
+        { kind: 'button', label: 'HOW TO PLAY', onPick: () => this.showHelp(() => this.showMain(6)) },
+        { kind: 'button', label: 'SETTINGS', onPick: () => this.showSettings(() => this.showMain(7)) },
       ],
       focus,
       onBack: () => this.showTitle(),
@@ -411,6 +417,112 @@ export class App {
     this.play({ kind: 'challenge', score: c.score }, { seed: c.seed, tier: c.tier, mission: c.mission, difficulty: c.difficulty, daily: null });
   }
 
+  /** The student's look: the LOCKER choices, or one fixed default — the same student in every school. */
+  private studentLook(): PersonLook {
+    const raw = this.store.data.locker.look;
+    return raw ? sanitizeLook(raw, this.defaultLook()) : this.defaultLook();
+  }
+
+  private defaultLook(): PersonLook {
+    return sanitizeLook(lookFor({ role: 'student', seed: 0x51ed }), lookFor({ role: 'student', seed: 0x51ed }));
+  }
+
+  /** LOCKER: cosmetics (all gameplay-neutral) and the nickname for share cards. */
+  private showLocker(focus = 0): void {
+    const save = this.store.data;
+    const look = this.studentLook();
+    const u = { xp: save.totals.xp, weeks: save.weeks };
+    this.lockerOpen = true;
+    const commit = (next: PersonLook, f: number): void => {
+      save.locker.look = { ...next };
+      this.store.save();
+      this.rebuildStudent();
+      this.showLocker(f);
+    };
+    const leave = (): void => {
+      save.locker.nickname = sanitizeNickname(this.ui.inputValue);
+      this.store.save();
+      this.lockerOpen = false;
+      this.showMain(4);
+    };
+    const choice = <T>(label: string, list: readonly Option<T>[], value: T, set: (v: T) => PersonLook, f: number): Item => {
+      const open = list.filter((o) => unlocked(o, u));
+      const locked = list.filter((o) => !unlocked(o, u));
+      const idx = Math.max(0, open.findIndex((o) => o.value === value));
+      return {
+        kind: 'choice',
+        label,
+        sub: locked.length ? `+${locked.length} locked · next: ${locked[0]!.name} (${lockReason(locked[0]!)})` : undefined,
+        options: open.map((o, i) => ({ value: String(i), label: o.name })),
+        value: String(idx),
+        onChange: (v) => commit(set(open[Number(v)]!.value), f),
+      };
+    };
+    const onOff = [
+      { value: 'on', label: 'ON' },
+      { value: 'off', label: 'OFF' },
+    ];
+    const next = nextXpUnlock(save.totals.xp);
+    this.ui.show({
+      id: 'locker',
+      kicker: 'Locker',
+      title: 'Your look',
+      subtitle: `${save.totals.xp} XP${next ? ` · next: ${next.name} at ${next.xp}` : ' · everything unlocked'} · all cosmetic`,
+      side: true,
+      clear: true,
+      input: {
+        label: 'Nickname (only on share cards you send)',
+        value: save.locker.nickname,
+        placeholder: 'optional',
+        maxLength: NICK_MAX,
+        autofocus: false,
+        onSubmit: (v) => {
+          save.locker.nickname = sanitizeNickname(v);
+          this.store.save();
+          this.ui.setInputError(save.locker.nickname !== v.trim() ? `Saved as "${save.locker.nickname}" (letters, numbers, . - _)` : null);
+        },
+      },
+      items: [
+        choice('Skin tone', SKIN, look.skin, (v) => ({ ...look, skin: v }), 0),
+        choice('Hair', HAIR_STYLE, look.hairStyle, (v) => ({ ...look, hairStyle: v }), 1),
+        choice('Hair colour', HAIR_COLOUR, look.hair, (v) => ({ ...look, hair: v }), 2),
+        choice('Hoodie', HOODIE, look.top, (v) => ({ ...look, top: v }), 3),
+        choice('Pants', PANTS, look.bottom, (v) => ({ ...look, bottom: v }), 4),
+        choice('Sneakers', SNEAKERS, look.shoes, (v) => ({ ...look, shoes: v }), 5),
+        choice('Backpack', BACKPACK, look.backpack, (v) => ({ ...look, backpack: v }), 6),
+        { kind: 'choice', label: 'Glasses', options: onOff, value: look.glasses ? 'on' : 'off', onChange: (v) => commit({ ...look, glasses: v === 'on' }, 7) },
+        { kind: 'choice', label: 'Headphones', options: onOff, value: look.headphones ? 'on' : 'off', onChange: (v) => commit({ ...look, headphones: v === 'on' }, 8) },
+        {
+          kind: 'button',
+          label: 'SURPRISE ME',
+          onPick: () => {
+            const rnd = <T>(list: readonly Option<T>[]): T => {
+              const open = list.filter((o) => unlocked(o, u));
+              return open[Math.floor(Math.random() * open.length)]!.value;
+            };
+            commit(
+              { skin: rnd(SKIN), hairStyle: rnd(HAIR_STYLE), hair: rnd(HAIR_COLOUR), top: rnd(HOODIE), bottom: rnd(PANTS), shoes: rnd(SNEAKERS), backpack: rnd(BACKPACK), glasses: Math.random() < 0.3, headphones: Math.random() < 0.5 },
+              9,
+            );
+          },
+        },
+        { kind: 'button', label: 'DONE', primary: true, onPick: leave },
+      ],
+      focus,
+      onBack: leave,
+    });
+  }
+
+  /** Rebuild the people of the current scene with the LOCKER look. */
+  private rebuildStudent(): void {
+    const plan = this.plan;
+    if (!plan || !this.sim) return;
+    this.actors?.dispose();
+    this.actors = buildActors(plan, { shadows: this.shadows, look: this.studentLook() });
+    this.renderer.scene.add(this.actors.root);
+    this.renderer.invalidateCompile();
+  }
+
   private weekTier: TierId | null = null;
 
   private showWeek(): void {
@@ -492,8 +604,8 @@ export class App {
       subtitle: `${t.runs} periods · ${t.ghosts} GHOST runs · ${t.detentions} detentions · ${t.snacks} snacks · daily streak ${dailyStreak(save, todayKey(), civilDay)}`,
       body: [table(rows), table(weeks)],
       clear: true,
-      items: [{ kind: 'button', label: 'BACK', onPick: () => this.showMain(4) }],
-      onBack: () => this.showMain(4),
+      items: [{ kind: 'button', label: 'BACK', onPick: () => this.showMain(5) }],
+      onBack: () => this.showMain(5),
     });
   }
 
@@ -752,14 +864,14 @@ export class App {
     if (!attract && this.store.data.settings.ghosts) {
       const rec = this.ghosts.get(ghostKey(this.config));
       if (rec) {
-        const view = buildGhost(plan.seed ^ 0x51ed);
+        const view = buildGhost(plan.seed ^ 0x51ed, this.studentLook());
         this.renderer.scene.add(view.root);
         const gs = createSim(plan, this.config);
         this.ghost = { sim: gs, player: new Player(rec), view, score: rec.score, px: gs.student.x, pz: gs.student.z };
       }
     }
     this.view = buildSchoolView(plan, { shadows: this.shadows });
-    this.actors = buildActors(plan, { shadows: this.shadows });
+    this.actors = buildActors(plan, { shadows: this.shadows, look: this.studentLook() });
     this.fx = buildStealthFx();
     this.snacks = buildSnacks(plan.snacks);
     this.renderer.scene.add(this.view.root, this.actors.root, this.fx.root, this.snacks.root);
@@ -938,7 +1050,7 @@ export class App {
     if (!r || !plan) return;
     const code = this.runCode();
     const daily = this.config.daily !== null ? dailyNumber(this.config.daily) : null;
-    const text = shareText(r, plan.name, code, daily);
+    const text = shareText(r, plan.name, code, daily, this.store.data.locker.nickname);
     const pic = planPicture(plan, 640);
     const canvas = document.createElement('canvas');
     canvas.width = pic.width;
@@ -1059,7 +1171,7 @@ export class App {
       return;
     }
     const attract = this.mode.kind === 'attract';
-    const running = attract ? sim.phase === 'playing' : this.phase === 'playing';
+    const running = attract ? sim.phase === 'playing' && !this.lockerOpen : this.phase === 'playing';
     if (this.bot && (attract || this.autopilot !== null)) {
       const b = this.bot.decide(sim);
       this.tick.moveX = b.moveX;
@@ -1140,6 +1252,21 @@ export class App {
     const k = snap ? 1 : 1 - Math.exp(-3 * dt);
     this.lead.x += (clamp(s.vx * 0.45, -2, 2) - this.lead.x) * k;
     this.lead.y += (clamp(s.vz * 0.45, -2, 2) - this.lead.y) * k;
+    if (this.lockerOpen && this.mode.kind === 'attract') {
+      // LOCKER: a close, low shot of the student, framed to the right of the panel (above it on a portrait phone).
+      // Stand in front of the student (where they face) and slide the frame so they sit beside the panel.
+      const portrait = this.renderer.rig.camera.aspect < 1;
+      const fx = Math.sin(s.yaw);
+      const fz = Math.cos(s.yaw);
+      // Looking back along −forward, screen-right is (fz, −fx); aim left of the student so they sit right of centre.
+      const side = portrait ? 0 : 1.1;
+      const lift = portrait ? 0.55 : 0;
+      const tx2 = f.x - fz * side;
+      const tz2 = f.z + fx * side;
+      this.renderer.rig.setGoal({ position: { x: tx2 + fx * 4.4, y: 1.9 + lift, z: tz2 + fz * 4.4 }, target: { x: tx2, y: 0.95 - lift * 0.6, z: tz2 }, fov: 40 }, snap ? 60 : 4);
+      if (snap) this.renderer.rig.snap();
+      return;
+    }
     const cam = this.mode.kind === 'attract' ? CAMERA_PRESETS.mid : this.camera;
     const p = (cam.pitch * Math.PI) / 180;
     const d = cam.distance;

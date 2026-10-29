@@ -6,6 +6,7 @@
 // means nothing is remembered — the game never breaks over it.
 // ─────────────────────────────────────────────────────────────────────────────
 import { DIFFICULTIES, MISSION_IDS, type Difficulty, type MissionId, type TierId } from '../school/types';
+import { xpFor } from '../game/locker';
 import { validRecording, type Recording } from '../share/ghost';
 import { GRADES, type Grade, type HallReport, type Rank } from '../sim/score';
 
@@ -55,8 +56,10 @@ export interface SaveData {
   records: Record<string, RunRecord>;
   /** DAILY results per yyyymmdd: the first attempt (marked on the share card) and the best. */
   daily: Record<string, { first: RunRecord; best: RunRecord; attempts: number }>;
-  totals: { runs: number; ghosts: number; detentions: number; snacks: number };
+  totals: { runs: number; ghosts: number; detentions: number; snacks: number; xp: number };
   settings: Settings;
+  /** LOCKER: the student's look (raw fields, checked against the options on use) and nickname. */
+  locker: { look: Record<string, number | boolean | string | null> | null; nickname: string };
 }
 
 export function defaultSave(): SaveData {
@@ -67,8 +70,9 @@ export function defaultSave(): SaveData {
     weeks: {},
     records: {},
     daily: {},
-    totals: { runs: 0, ghosts: 0, detentions: 0, snacks: 0 },
+    totals: { runs: 0, ghosts: 0, detentions: 0, snacks: 0, xp: 0 },
     settings: { camera: 'close', walls: 'occlude', cones: true, reducedMotion: false, music: 0.8, sfx: 1, muted: false, ghosts: true },
+    locker: { look: null, nickname: '' },
   };
 }
 
@@ -120,7 +124,7 @@ export function sanitize(raw: unknown): SaveData {
   }
   if (isObj(raw.totals)) {
     const t = raw.totals;
-    out.totals = { runs: num(t.runs, 0, 1e9, 0), ghosts: num(t.ghosts, 0, 1e9, 0), detentions: num(t.detentions, 0, 1e9, 0), snacks: num(t.snacks, 0, 1e9, 0) };
+    out.totals = { runs: num(t.runs, 0, 1e9, 0), ghosts: num(t.ghosts, 0, 1e9, 0), detentions: num(t.detentions, 0, 1e9, 0), snacks: num(t.snacks, 0, 1e9, 0), xp: num(t.xp, 0, 1e9, 0) };
   }
   if (isObj(raw.settings)) {
     const s = raw.settings;
@@ -134,6 +138,18 @@ export function sanitize(raw: unknown): SaveData {
       muted: s.muted === true,
       ghosts: s.ghosts !== false,
     };
+  }
+  if (isObj(raw.locker)) {
+    const l = raw.locker;
+    if (isObj(l.look)) {
+      const look: Record<string, number | boolean | string | null> = {};
+      for (const k of ['skin', 'hairStyle', 'hair', 'top', 'bottom', 'shoes', 'glasses', 'backpack', 'headphones']) {
+        const v = l.look[k];
+        if (v === null || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)) || (typeof v === 'string' && v.length <= 12)) look[k] = v as never;
+      }
+      out.locker.look = look;
+    }
+    out.locker.nickname = typeof l.nickname === 'string' ? l.nickname.slice(0, 24) : '';
   }
   return out;
 }
@@ -165,6 +181,7 @@ export function recordRun(save: SaveData, r: HallReport, tier: TierId, daily: nu
   if (r.rank === 'GHOST') save.totals.ghosts++;
   if (r.rank === 'DETENTION') save.totals.detentions++;
   save.totals.snacks += snacks;
+  save.totals.xp += xpFor(r.total);
   return best;
 }
 

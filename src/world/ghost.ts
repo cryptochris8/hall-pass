@@ -2,7 +2,7 @@
 // student. Same rig and look as the real one; every material cloned translucent and tinted (so the shared ones
 // are untouched), no shadows. Driven by the ghost's own sim state; purely visual.
 import * as THREE from 'three';
-import { createPerson } from '../people';
+import { createPerson, type PersonLook } from '../people';
 import type { Posture } from '../sim/types';
 
 export interface GhostView {
@@ -11,10 +11,10 @@ export interface GhostView {
   dispose(): void;
 }
 
-export function buildGhost(seed: number): GhostView {
+export function buildGhost(seed: number, look: PersonLook | null = null): GhostView {
   const root = new THREE.Group();
   root.name = 'ghost';
-  const person = createPerson({ role: 'student', seed });
+  const person = createPerson({ role: 'student', seed, look: look ?? undefined });
   const clones: THREE.Material[] = [];
   const tint = new THREE.Color(0x9fd6ff);
   person.root.traverse((o) => {

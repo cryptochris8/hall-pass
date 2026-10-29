@@ -72,6 +72,14 @@ Procedural animation states: idle (phone glance, backpack hitch), sneak (crouche
 hide-enter / hide-exit per hide type, peek (lean at corners), throw, grab, flinch, "busted" freeze, escorted walk,
 sit-at-desk, victory slide into the seat. Expressions: neutral, smug, nervous, panicked, relieved.
 
+**As built (LOCKER).** Main menu → LOCKER: skin tone (8), hair (9 styles × 9 colours), hoodie colour, pants,
+sneakers, backpack (or none), glasses, headphones, and a nickname (letters, numbers, space, `.` `-` `_`, 12 max; it
+appears only on share cards you send). The panel sits at the side and the camera frames your student, who updates
+live. Unlocks: three hair dyes, two sneaker colours and two backpacks by XP (25 per run plus score ÷ 20, so even a
+detention counts), and each school's signature hoodie by clearing its SCHOOL WEEK with an A average. The same
+student (your look, or one fixed default) appears in every school, the attract run and your ghost. Top cuts stay
+hoodies for now (the rig's student cut); jacket / tee are a later people-module change.
+
 ## 3. The school (procedural floor plans)
 
 One floor per run (two-floor schools with stairwells are a later tier, §9). The school is built on a **grid of

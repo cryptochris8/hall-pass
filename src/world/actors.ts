@@ -8,7 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { lerp } from '../core/math';
-import { createPerson, type Person, type PersonRole } from '../people';
+import { createPerson, type Person, type PersonLook, type PersonRole } from '../people';
 import { PAL } from '../render/palette';
 import { toon } from '../render/toon';
 import type { SchoolPlan } from '../school/types';
@@ -85,7 +85,8 @@ interface StaffView {
   level: SuspicionLevel;
 }
 
-export function buildActors(plan: SchoolPlan, opts: { shadows: boolean }): ActorsView {
+/** `look`: the student's LOCKER look (null = the seeded default). */
+export function buildActors(plan: SchoolPlan, opts: { shadows: boolean; look?: PersonLook | null }): ActorsView {
   const root = new THREE.Group();
   root.name = 'actors';
   const disposables: { dispose(): void }[] = [];
@@ -120,7 +121,7 @@ export function buildActors(plan: SchoolPlan, opts: { shadows: boolean }): Actor
 
   // Student.
   const student = new THREE.Group();
-  const me = createPerson({ role: 'student', seed: plan.seed ^ 0x51ed });
+  const me = createPerson({ role: 'student', seed: plan.seed ^ 0x51ed, look: opts.look ?? undefined });
   castAll(me.root);
   shadowBlob(student);
   const sRing = new THREE.Mesh(ring, ringMat);
@@ -144,7 +145,9 @@ export function buildActors(plan: SchoolPlan, opts: { shadows: boolean }): Actor
       castAll(cam);
       g.add(cam);
     } else {
-      person = createPerson({ role: sp.archetype as PersonRole, seed: (plan.seed * 31 + idx * 977) >>> 0 });
+      // The PHONE JAIL secretary is a sentry in the sim but dresses like office staff (cardigan, glasses).
+      const role: PersonRole = sp.skin === 'secretary0' ? 'listener' : (sp.archetype as PersonRole);
+      person = createPerson({ role, seed: (plan.seed * 31 + idx * 977) >>> 0 });
       castAll(person.root);
       shadowBlob(g, sp.archetype === 'wanderer' ? 1.5 : 1);
       g.add(person.root);

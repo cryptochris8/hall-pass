@@ -39,8 +39,10 @@ export interface ScreenSpec {
   onAny?: () => void;
   /** Lighter backdrop (the 3D scene shows through). */
   clear?: boolean;
+  /** Panel at the side (left; bottom on a portrait phone) so the 3D scene shows (LOCKER). */
+  side?: boolean;
   /** A text field (challenge codes). Enter submits; Esc goes back. What's typed is only ever read as text. */
-  input?: { label: string; value: string; placeholder: string; maxLength: number; error?: string | null; onSubmit: (value: string) => void };
+  input?: { label: string; value: string; placeholder: string; maxLength: number; error?: string | null; autofocus?: boolean; onSubmit: (value: string) => void };
 }
 
 /** Tiny DOM helper: text always via textContent. */
@@ -120,6 +122,7 @@ export class Ui {
     this.root.textContent = '';
     this.root.hidden = false;
     this.root.classList.toggle('hp-clear', spec.clear === true);
+    this.root.classList.toggle('hp-side', spec.side === true);
     this.mouse.moved = false;
     const layout = spec.layout ?? 'menu';
     const screen = el('div', `hp-screen hp-layout-${layout}`);
@@ -203,7 +206,7 @@ export class Ui {
     });
     if (spec.items.length > 0) screen.append(list);
     this.root.append(screen);
-    if (this.field) {
+    if (this.field && spec.input?.autofocus !== false) {
       const f = this.field;
       setTimeout(() => {
         try {

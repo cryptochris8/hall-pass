@@ -14,6 +14,13 @@ export const MENU_CSS = `
   box-sizing: border-box; }
 .hp-menu[hidden] { display: none; }
 .hp-menu.hp-clear { background: linear-gradient(180deg, rgba(16,20,30,.2), rgba(16,20,30,.6)); }
+.hp-menu.hp-side { place-items: center start; background: linear-gradient(90deg, rgba(16,20,30,.55), rgba(16,20,30,0) 60%); }
+.hp-menu.hp-side .hp-screen { width: min(430px, 100%); }
+.hp-menu.hp-side .hp-item { min-height: 42px; padding: 7px 12px; }
+@media (max-aspect-ratio: 1/1) {
+  .hp-menu.hp-side { place-items: end center; background: linear-gradient(0deg, rgba(16,20,30,.6), rgba(16,20,30,0) 70%); }
+  .hp-menu.hp-side .hp-screen { max-height: 58%; }
+}
 .hp-layout-menu { background: rgba(16,20,30,.78); border-radius: 18px; padding: 18px; box-shadow: 0 12px 40px rgba(0,0,0,.35);
   -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
 .hp-menu * { box-sizing: border-box; }

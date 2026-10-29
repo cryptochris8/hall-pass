@@ -27,8 +27,8 @@ function clock(seconds: number): string {
  * PHONE JAIL  ·  2:41  ·  spotted 0×  ·  GHOST  ·  A+
  * H4L-L22-4120
  */
-export function shareText(r: HallReport, school: string, code: string, daily: number | null): string {
-  const head = daily !== null ? `HALL PASS #${daily}` : 'HALL PASS';
+export function shareText(r: HallReport, school: string, code: string, daily: number | null, nickname = ''): string {
+  const head = (daily !== null ? `HALL PASS #${daily}` : 'HALL PASS') + (nickname ? `  ·  ${nickname}` : '');
   const time = r.success ? clock(r.seconds) : r.outcome === 'timeout' ? 'late' : 'detention';
   return [
     `${head}  ·  ${school}  ·  ${r.difficulty.toUpperCase()}`,

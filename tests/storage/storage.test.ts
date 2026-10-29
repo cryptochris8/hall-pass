@@ -101,7 +101,7 @@ describe('save data', () => {
     expect(recordRun(s, report(4000, 'A+', 'GHOST'), 1, 20261025, 1)).toBe(true);
     expect(s.records[recordKey('phone', 1, 'junior')]!.score).toBe(4000);
     expect(s.daily['20261025']).toMatchObject({ attempts: 3, first: { score: 3000 }, best: { score: 4000 } });
-    expect(s.totals).toEqual({ runs: 3, ghosts: 2, detentions: 0, snacks: 3 });
+    expect(s.totals).toEqual({ runs: 3, ghosts: 2, detentions: 0, snacks: 3, xp: 3 * 25 + (3000 + 2000 + 4000) / 20 });
   });
 
   it('daily streak counts consecutive days ending today or yesterday', () => {
