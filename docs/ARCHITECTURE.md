@@ -340,6 +340,12 @@ voices), `ambience` (SchoolBed) and `qa` (offline render checks, `dev/audio.html
 `src/game/sound.ts` (SoundDirector) maps screens, suspicion and SimEvents to audio; the app owns unlock (gesture
 listener + input first gesture), volumes and mute.
 
+**M6 as built.** `src/core/code.ts` (challenge codes, pure), `src/share/ghost.ts` (Recorder / Player, RLE + base64,
+`validRecording`; replay is exact — tested by hash), `src/share/card.ts` (share text, `drawFloorPlan` onto any 2D
+context), `src/world/ghost.ts` (translucent student), `GhostStore` in `src/storage`. The app records every player
+run's TickInputs, samples the route every 15 ticks, keeps the best successful run per school as its ghost, and steps
+a second sim with the ghost's inputs during play. Debug hooks: `code()`, `record()`, `ghost()`, `share()`.
+
 Owners work in parallel from M3 on: **school**, **sim**, **world**, **people**, **audio**, **ui**, with
 **integration** owning game, render core, input, share, storage, headless and e2e.
 

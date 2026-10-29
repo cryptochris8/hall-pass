@@ -47,6 +47,13 @@ export const MENU_CSS = `
 .hp-tbl td { padding: 5px 4px; border-bottom: 1px solid rgba(244,241,234,.12); }
 .hp-tbl td:last-child { text-align: right; font-family: var(--hp-mono); }
 .hp-tbl tr.hp-dim td { opacity: .45; }
+.hp-field { display: flex; flex-direction: column; gap: 6px; font-weight: 800; }
+.hp-field input { font: 800 26px/1 var(--hp-mono); letter-spacing: .12em; text-transform: uppercase; padding: 12px 14px; border-radius: 12px;
+  border: 3px solid rgba(244,241,234,.25); background: rgba(244,241,234,.08); color: var(--hp-paper); outline: none; width: 100%; user-select: text; -webkit-user-select: text; }
+.hp-field input:focus { border-color: var(--hp-cone); }
+.hp-error { color: #ff8a80; font-weight: 700; }
+.hp-share-img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.4); background: var(--hp-paper); }
+.hp-share-text { margin: 0; white-space: pre-wrap; font: 700 13px/1.45 var(--hp-mono); background: rgba(244,241,234,.08); padding: 10px 12px; border-radius: 10px; user-select: text; -webkit-user-select: text; }
 .hp-help { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 14px; }
 .hp-help b { color: var(--hp-cone); white-space: nowrap; }
 .hp-help span { opacity: .9; font-weight: 500; }

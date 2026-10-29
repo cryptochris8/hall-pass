@@ -278,6 +278,21 @@ The game records the **inputs** of your best run per seed (the sim is determinis
 replays it as a see-through **ghost** student. It's local only in v1. Online ghosts and leaderboards would need a
 server that re-runs submitted inputs headlessly to verify the score (§13).
 
+**As built (M6).**
+- **Challenge codes** (`src/core/code.ts`): `XXX-XXX`, 30 bits (seed 22 · mission 3 · tier 3 · difficulty 2) in a
+  32-letter alphabet without 0 O 1 I; an optional score after a second dash (`23A-9V7-5220`) is the score to beat.
+  Main menu → CHALLENGE CODE (type or paste; a bad code gets "That code doesn't look right — check it and try
+  again."), or open the game with `?code=`. A DAILY's code replays the same school but isn't marked as the daily.
+- **Share** (Hall Report → SHARE): the three-line text (§8.1) with the code, and a 640 px evacuation-map picture —
+  corridors, walls, YOU ARE HERE at your desk, the goal(s) in blue, your route in red, an X where you were busted.
+  COPY TEXT, SAVE PICTURE, and SHARE… where the device has a share sheet. Nothing is sent anywhere by the game.
+  No nickname yet (that comes with LOCKER).
+- **Ghosts**: every run's inputs are recorded (run-length encoded; a few KB for keyboard play, more for analog
+  sticks). A successful run that beats your best on that exact school (seed + school + mission + difficulty) is kept
+  as its ghost — 12 schools at most, oldest dropped. Playing that school again (RETRY, a challenge code, the same
+  DAILY) races a see-through copy of you, replayed in a second sim. The mission card and the report say so.
+  Settings → Ghost races turns it off. Ghosts are local only (open question 3 stays open).
+
 ## 9. Difficulty & progression
 
 | | FRESHMAN | JUNIOR | SENIOR |

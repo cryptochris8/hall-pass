@@ -14,6 +14,10 @@ export interface CardInfo {
   bellSeconds: number;
   passes: number;
   snacks: number;
+  /** Your best score here when its ghost will race you (null: no ghost). */
+  ghost?: number | null;
+  /** A friend's score to beat (challenge codes). */
+  toBeat?: number | null;
 }
 
 export function missionCard(c: CardInfo, goLabel: string): HTMLElement {
@@ -29,6 +33,8 @@ export function missionCard(c: CardInfo, goLabel: string): HTMLElement {
     el('span', 'hp-chip', c.passes === 0 ? 'No hall pass' : `${c.passes} hall pass${c.passes > 1 ? 'es' : ''}`),
   );
   if (c.snacks > 0) meta.append(el('span', 'hp-chip', `${c.snacks} snack packs hidden`));
+  if (c.ghost) meta.append(el('span', 'hp-chip', `Ghost of your best: ${c.ghost}`));
+  if (c.toBeat) meta.append(el('span', 'hp-chip', `Score to beat: ${c.toBeat}`));
   card.append(meta);
   card.append(el('p', 'hp-twist', `${c.school} · ${c.motto}`));
   card.append(el('div', 'hp-go', goLabel));

@@ -6,6 +6,7 @@
 // means nothing is remembered — the game never breaks over it.
 // ─────────────────────────────────────────────────────────────────────────────
 import { DIFFICULTIES, MISSION_IDS, type Difficulty, type MissionId, type TierId } from '../school/types';
+import { validRecording, type Recording } from '../share/ghost';
 import { GRADES, type Grade, type HallReport, type Rank } from '../sim/score';
 
 export const SAVE_KEY = 'hall-pass:save:v1';
@@ -39,6 +40,8 @@ export interface Settings {
   music: number;
   sfx: number;
   muted: boolean;
+  /** Race the ghost of your best run on a school you've cleared before. */
+  ghosts: boolean;
 }
 
 export interface SaveData {
@@ -65,7 +68,7 @@ export function defaultSave(): SaveData {
     records: {},
     daily: {},
     totals: { runs: 0, ghosts: 0, detentions: 0, snacks: 0 },
-    settings: { camera: 'close', walls: 'occlude', cones: true, reducedMotion: false, music: 0.8, sfx: 1, muted: false },
+    settings: { camera: 'close', walls: 'occlude', cones: true, reducedMotion: false, music: 0.8, sfx: 1, muted: false, ghosts: true },
   };
 }
 
@@ -129,6 +132,7 @@ export function sanitize(raw: unknown): SaveData {
       music: typeof s.music === 'number' && Number.isFinite(s.music) ? Math.min(1, Math.max(0, s.music)) : 0.8,
       sfx: typeof s.sfx === 'number' && Number.isFinite(s.sfx) ? Math.min(1, Math.max(0, s.sfx)) : 1,
       muted: s.muted === true,
+      ghosts: s.ghosts !== false,
     };
   }
   return out;
@@ -215,5 +219,80 @@ function safeLocalStorage(): Storage | null {
     return typeof localStorage !== 'undefined' ? localStorage : null;
   } catch {
     return null;
+  }
+}
+
+// ── Ghosts (docs/GDD.md §8.2) ───────────────────────────────────────────────
+
+export const GHOST_KEY = 'hall-pass:ghosts:v1';
+/** Best-run recordings kept (oldest dropped first). */
+export const MAX_GHOSTS = 12;
+
+/** The ghost slot of a run: one exact school (seed + tier + mission + difficulty). */
+export function ghostKey(c: { seed: number; tier: number; mission: string; difficulty: string }): string {
+  return `${c.seed}:${c.tier}:${c.mission}:${c.difficulty}`;
+}
+
+/** Best-run recordings in localStorage, guarded like the save. Anything unreadable is dropped. */
+export class GhostStore {
+  private items: { key: string; rec: Recording; at: number }[] = [];
+  private clock = 0;
+
+  constructor(private readonly storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null = safeLocalStorage()) {
+    try {
+      const raw: unknown = JSON.parse(this.storage?.getItem(GHOST_KEY) ?? '[]');
+      if (Array.isArray(raw)) {
+        for (const it of raw.slice(-MAX_GHOSTS)) {
+          if (!it || typeof it !== 'object') continue;
+          const rec = validRecording((it as { rec?: unknown }).rec);
+          if (rec) this.items.push({ key: ghostKey(rec.config), rec, at: this.clock++ });
+        }
+      }
+    } catch {
+      this.items = [];
+    }
+  }
+
+  get(key: string): Recording | null {
+    return this.items.find((i) => i.key === key)?.rec ?? null;
+  }
+
+  /** Keep `rec` if it beats the stored one for its school. Returns whether it was kept. */
+  offer(rec: Recording): boolean {
+    const key = ghostKey(rec.config);
+    const old = this.items.find((i) => i.key === key);
+    if (old && old.rec.score >= rec.score) return false;
+    this.items = this.items.filter((i) => i.key !== key);
+    this.items.push({ key, rec, at: this.clock++ });
+    while (this.items.length > MAX_GHOSTS) this.items.shift();
+    this.persist();
+    return true;
+  }
+
+  get size(): number {
+    return this.items.length;
+  }
+
+  clear(): void {
+    this.items = [];
+    try {
+      this.storage?.removeItem(GHOST_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private persist(): void {
+    try {
+      this.storage?.setItem(GHOST_KEY, JSON.stringify(this.items.map((i) => ({ rec: i.rec }))));
+    } catch {
+      // Quota: drop the oldest half and try once more; otherwise ghosts just aren't kept.
+      this.items = this.items.slice(Math.floor(this.items.length / 2));
+      try {
+        this.storage?.setItem(GHOST_KEY, JSON.stringify(this.items.map((i) => ({ rec: i.rec }))));
+      } catch {
+        /* nothing kept */
+      }
+    }
   }
 }

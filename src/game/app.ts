@@ -14,6 +14,7 @@
 import * as THREE from 'three';
 import { createAudio } from '../audio';
 import type { AudioEngine } from '../audio/types';
+import { BAD_CODE, decodeCode, encodeCode } from '../core/code';
 import { clamp } from '../core/math';
 import { hashInts } from '../core/rng';
 import { createInput, type InputManager } from '../input';
@@ -25,11 +26,14 @@ import { createSim, hideFront, missionGoals, step, BTN_INTERACT, BTN_SNEAK, BTN_
 import { createBot, type Bot } from '../sim/bot';
 import { hallReport, type HallReport } from '../sim/score';
 import { DIFFICULTY, HIDE, MISSION_RULES, RULES, THROW, lunchTick } from '../sim/tuning';
-import { dailyStreak, recordRun, Store, type CameraPreset } from '../storage';
+import { drawFloorPlan, planPicture, shareText } from '../share/card';
+import { Player, Recorder, type Recording } from '../share/ghost';
+import { dailyStreak, GhostStore, ghostKey, recordRun, Store, type CameraPreset } from '../storage';
 import { Ui, el, type Item, type ScreenSpec } from '../ui';
 import { helpGrid, missionCard, reportCard, table } from '../ui/screens';
 import { DIFFICULTY_NAME, DIFFICULTY_NOTE, GOAL_LINE, MISSION_NAME, TIER_NAME, TIER_NOTE, clock } from '../ui/text';
 import { buildSnacks, buildStealthFx, type SnackView, type StealthFx } from '../world/fx';
+import { buildGhost, type GhostView } from '../world/ghost';
 import { buildActors, takeSnapshot, type ActorsView, type Snapshot } from '../world/actors';
 import { buildSchoolView, type SchoolView, type ViewPoints, type WallMode } from '../world/school';
 import { installAudioUnlock } from './audioUnlock';
@@ -50,6 +54,8 @@ export interface AppParams {
   debug: boolean;
   /** Skip the title and the mission card: straight into a run (tests, screenshots). */
   autostart: boolean;
+  /** ?code= — open straight into that challenge. */
+  code: string | null;
 }
 
 const MAX_STEPS = 4;
@@ -79,7 +85,22 @@ const CAMERA_PRESETS: Record<CameraPreset, Pick<CameraSettings, 'pitch' | 'dista
   tactical: { pitch: 60, distance: 28, fov: 40 },
 };
 
-type Mode = { kind: 'daily'; day: number } | { kind: 'week'; tier: TierId; seed: number; day: number } | { kind: 'quick' } | { kind: 'attract' };
+type Mode =
+  | { kind: 'daily'; day: number }
+  | { kind: 'week'; tier: TierId; seed: number; day: number }
+  | { kind: 'quick' }
+  | { kind: 'challenge'; score: number | null }
+  | { kind: 'attract' };
+
+/** The ghost race: a second sim fed your best run's inputs, drawn see-through. */
+interface GhostRun {
+  sim: SimState;
+  player: Player;
+  view: GhostView;
+  score: number;
+  px: number;
+  pz: number;
+}
 type Phase = 'boot' | 'title' | 'menu' | 'loading' | 'intro' | 'playing' | 'paused' | 'outro' | 'report';
 
 export class App {
@@ -89,6 +110,17 @@ export class App {
   private readonly ui: Ui;
   private readonly store = new Store();
   private readonly schools = new Schools();
+  private readonly ghosts = new GhostStore();
+  /** Inputs of the run in progress (null for attract runs). */
+  private recorder: Recorder | null = null;
+  private lastRecording: Recording | null = null;
+  /** The route for the share card: [x, z, …] every quarter second, and where you got busted. */
+  private path: number[] = [];
+  private busts: number[] = [];
+  private ghost: GhostRun | null = null;
+  private reportScreen: ScreenSpec | null = null;
+  private codeDraft = '';
+  private codeError: string | null = null;
   private readonly audio: AudioEngine;
   private readonly sound: SoundDirector;
   private readonly unlockOff: () => void;
@@ -205,6 +237,16 @@ export class App {
         daily: null,
       };
       this.play({ kind: 'quick' }, c);
+    } else if (params.code !== null) {
+      const c = decodeCode(params.code);
+      this.showTitle();
+      this.startAttract();
+      if (c) this.playCode(c);
+      else {
+        this.codeDraft = params.code.slice(0, 16);
+        this.codeError = BAD_CODE;
+        this.showCode();
+      }
     } else {
       this.showTitle();
       this.startAttract();
@@ -269,9 +311,10 @@ export class App {
         },
         { kind: 'button', label: 'SCHOOL WEEK', sub: weekSub, right: `School ${save.unlocked}/5`, onPick: () => this.showWeek() },
         { kind: 'button', label: 'QUICK PERIOD', sub: 'Random school · pick the mission and difficulty', onPick: () => this.showQuick() },
+        { kind: 'button', label: 'CHALLENGE CODE', sub: "Play the exact run a friend played", onPick: () => this.showCode() },
         { kind: 'button', label: 'RECORDS', sub: 'Best grades, streaks, weeks cleared', onPick: () => this.showRecords() },
-        { kind: 'button', label: 'HOW TO PLAY', onPick: () => this.showHelp(() => this.showMain(4)) },
-        { kind: 'button', label: 'SETTINGS', onPick: () => this.showSettings(() => this.showMain(5)) },
+        { kind: 'button', label: 'HOW TO PLAY', onPick: () => this.showHelp(() => this.showMain(5)) },
+        { kind: 'button', label: 'SETTINGS', onPick: () => this.showSettings(() => this.showMain(6)) },
       ],
       focus,
       onBack: () => this.showTitle(),
@@ -332,6 +375,40 @@ export class App {
       focus,
       onBack: () => this.showMain(2),
     });
+  }
+
+  /** CHALLENGE CODE: type or paste a code. */
+  private showCode(): void {
+    if (this.phase !== 'menu') this.setPhase('menu');
+    const submit = (v: string): void => {
+      this.codeDraft = v;
+      const c = decodeCode(v);
+      if (!c) {
+        this.codeError = BAD_CODE;
+        this.audio.play('uiDenied');
+        this.ui.setInputError(BAD_CODE);
+        return;
+      }
+      this.codeError = null;
+      this.playCode(c);
+    };
+    this.ui.show({
+      id: 'code',
+      kicker: 'Challenge code',
+      title: 'Play a friend’s run',
+      subtitle: 'Same school, same staff, same mission, same difficulty. Codes look like H4L-L22 (a score after a second dash is the one to beat).',
+      input: { label: 'Code', value: this.codeDraft, placeholder: 'XXX-XXX', maxLength: 16, error: this.codeError, onSubmit: submit },
+      clear: true,
+      items: [
+        { kind: 'button', label: 'PLAY', primary: true, onPick: () => submit(this.ui.inputValue) },
+        { kind: 'button', label: 'BACK', onPick: () => this.showMain(3) },
+      ],
+      onBack: () => this.showMain(3),
+    });
+  }
+
+  private playCode(c: NonNullable<ReturnType<typeof decodeCode>>): void {
+    this.play({ kind: 'challenge', score: c.score }, { seed: c.seed, tier: c.tier, mission: c.mission, difficulty: c.difficulty, daily: null });
   }
 
   private weekTier: TierId | null = null;
@@ -415,8 +492,8 @@ export class App {
       subtitle: `${t.runs} periods · ${t.ghosts} GHOST runs · ${t.detentions} detentions · ${t.snacks} snacks · daily streak ${dailyStreak(save, todayKey(), civilDay)}`,
       body: [table(rows), table(weeks)],
       clear: true,
-      items: [{ kind: 'button', label: 'BACK', onPick: () => this.showMain(3) }],
-      onBack: () => this.showMain(3),
+      items: [{ kind: 'button', label: 'BACK', onPick: () => this.showMain(4) }],
+      onBack: () => this.showMain(4),
     });
   }
 
@@ -530,6 +607,17 @@ export class App {
         },
         {
           kind: 'choice',
+          label: 'Ghost races',
+          sub: 'Your best run on a school races you when you play it again',
+          options: onOff,
+          value: s.ghosts ? 'on' : 'off',
+          onChange: (v) => {
+            s.ghosts = v === 'on';
+            save();
+          },
+        },
+        {
+          kind: 'choice',
           label: 'Reduced motion',
           sub: 'Skips the fly-over and keeps the camera calm',
           options: onOff,
@@ -546,13 +634,13 @@ export class App {
           onPick: () => {
             if (!this.resetArmed) {
               this.resetArmed = true;
-              this.showSettings(back, 6);
+              this.showSettings(back, 7);
               return;
             }
             this.resetArmed = false;
             this.store.reset();
             this.applyVolumes();
-            this.showSettings(back, 6);
+            this.showSettings(back, 7);
           },
         },
         { kind: 'button', label: 'BACK', onPick: () => ((this.resetArmed = false), back()) },
@@ -591,6 +679,8 @@ export class App {
   }
 
   private quitToMenu(): void {
+    this.ghost?.view.dispose();
+    this.ghost = null;
     this.mode = { kind: 'attract' };
     this.showMain();
   }
@@ -653,6 +743,21 @@ export class App {
     this.actors?.dispose();
     this.fx?.dispose();
     this.snacks?.dispose();
+    this.ghost?.view.dispose();
+    this.ghost = null;
+    this.recorder = attract ? null : new Recorder();
+    this.lastRecording = null;
+    this.path = [];
+    this.busts = [];
+    if (!attract && this.store.data.settings.ghosts) {
+      const rec = this.ghosts.get(ghostKey(this.config));
+      if (rec) {
+        const view = buildGhost(plan.seed ^ 0x51ed);
+        this.renderer.scene.add(view.root);
+        const gs = createSim(plan, this.config);
+        this.ghost = { sim: gs, player: new Player(rec), view, score: rec.score, px: gs.student.x, pz: gs.student.z };
+      }
+    }
     this.view = buildSchoolView(plan, { shadows: this.shadows });
     this.actors = buildActors(plan, { shadows: this.shadows });
     this.fx = buildStealthFx();
@@ -671,7 +776,7 @@ export class App {
     const plan = this.plan!;
     this.setPhase('intro');
     const m = this.mode;
-    const kicker = m.kind === 'daily' ? `Daily period #${dailyNumber(m.day)}` : m.kind === 'week' ? `School week · ${WEEKDAYS[m.day]}` : 'Quick period';
+    const kicker = m.kind === 'daily' ? `Daily period #${dailyNumber(m.day)}` : m.kind === 'week' ? `School week · ${WEEKDAYS[m.day]}` : m.kind === 'challenge' ? 'Challenge code' : 'Quick period';
     const reduced = this.store.data.settings.reducedMotion;
     if (!reduced) {
       // Fly-over: start high over the whole school, then glide down to your desk.
@@ -697,6 +802,8 @@ export class App {
             bellSeconds: plan.bellTicks / SIM_HZ,
             passes: DIFFICULTY[this.config.difficulty].passes,
             snacks: plan.snacks.length,
+            ghost: this.ghost?.score ?? null,
+            toBeat: m.kind === 'challenge' ? m.score : null,
           },
           'Press GRAB / tap to start',
         ),
@@ -733,6 +840,11 @@ export class App {
           : 'You were not in your seat.';
     this.hud.showBanner(title, sub, null);
     this.report = hallReport(s, this.par);
+    this.path.push(s.student.x, s.student.z);
+    if (this.recorder) {
+      this.lastRecording = this.recorder.finish(this.config, this.report.total);
+      this.recorder = null;
+    }
   }
 
   private showReport(): void {
@@ -779,10 +891,18 @@ export class App {
         }
       }
       items.push({ kind: 'button', label: 'RETRY', onPick: () => this.retry() });
+    } else if (m.kind === 'challenge') {
+      context = 'Challenge code';
+      if (m.score !== null) footer = r.total > m.score ? `Beat their ${m.score}!` : r.total === m.score ? `Tied their ${m.score}` : `Their score: ${m.score}`;
+      items.push({ kind: 'button', label: 'RETRY', primary: true, onPick: () => this.retry() });
     } else {
       items.push({ kind: 'button', label: 'NEW SCHOOL', primary: true, onPick: () => this.play({ kind: 'quick' }, { ...this.config, seed: (this.config.seed + 1) & 0x3fffff }) });
       items.push({ kind: 'button', label: 'RETRY', onPick: () => this.retry() });
     }
+    // Your best run here becomes the ghost you race next time.
+    if (this.lastRecording && r.success && this.ghosts.offer(this.lastRecording)) footer = [footer, 'Ghost saved'].filter(Boolean).join(' · ');
+    if (this.ghost && r.success) footer = [footer, r.total > this.ghost.score ? 'Beat your ghost' : `Ghost ${this.ghost.score}`].filter(Boolean).join(' · ');
+    items.push({ kind: 'button', label: 'SHARE', onPick: () => this.showShare() });
     items.push({ kind: 'button', label: 'MENU', onPick: () => this.quitToMenu() });
     this.store.save();
     setTimeout(() => {
@@ -794,13 +914,104 @@ export class App {
         if (newBest && r.total > 0) setTimeout(() => this.audio.play('newBest'), 500);
       }, 250);
     }, 300);
-    this.ui.show({
+    this.reportScreen = {
       id: 'report',
       layout: 'report',
       body: [reportCard(r, { school: plan.name, context, newBest, footer })],
       items,
       row: true,
       onBack: () => this.quitToMenu(),
+    };
+    this.ui.show(this.reportScreen);
+  }
+
+  /** The challenge code of the run just played (with its score). */
+  private runCode(): string {
+    const c = this.config;
+    return encodeCode({ seed: c.seed, mission: c.mission, tier: c.tier, difficulty: c.difficulty, score: this.report?.total ?? null });
+  }
+
+  /** SHARE: the text, the floor-plan picture, copy / save / share. Nothing leaves the device unless you send it. */
+  private showShare(): void {
+    const r = this.report;
+    const plan = this.plan;
+    if (!r || !plan) return;
+    const code = this.runCode();
+    const daily = this.config.daily !== null ? dailyNumber(this.config.daily) : null;
+    const text = shareText(r, plan.name, code, daily);
+    const pic = planPicture(plan, 640);
+    const canvas = document.createElement('canvas');
+    canvas.width = pic.width;
+    canvas.height = pic.height;
+    const g = canvas.getContext('2d');
+    let url = '';
+    if (g) {
+      drawFloorPlan(g, plan, this.path, this.busts, `${daily !== null ? `HALL PASS #${daily}` : 'HALL PASS'} · ${MISSION_NAME[r.mission]}`, `${r.rank} · ${r.grade} · ${r.total} pts · ${code}`, pic);
+      try {
+        url = canvas.toDataURL('image/png');
+      } catch {
+        url = '';
+      }
+    }
+    const img = url ? el('img', 'hp-share-img') : null;
+    if (img) {
+      img.src = url;
+      img.alt = 'Floor plan of the school with your route drawn on it';
+    }
+    const back = (): void => {
+      if (this.reportScreen) this.ui.show(this.reportScreen);
+    };
+    const note = (msg: string): void => this.hud.showBanner(msg, '', null);
+    const items: Item[] = [
+      {
+        kind: 'button',
+        label: 'COPY TEXT',
+        sub: code,
+        primary: true,
+        onPick: () => {
+          void navigator.clipboard?.writeText(text).then(
+            () => note('Copied'),
+            () => note('Copy failed: select the text instead'),
+          );
+          setTimeout(() => this.hud.hideBanner(), 1200);
+        },
+      },
+    ];
+    if (url) {
+      items.push({
+        kind: 'button',
+        label: 'SAVE PICTURE',
+        onPick: () => {
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `hall-pass-${code.slice(0, 7)}.png`;
+          a.click();
+        },
+      });
+      const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
+      if (typeof nav.share === 'function') {
+        items.push({
+          kind: 'button',
+          label: 'SHARE…',
+          onPick: () => {
+            canvas.toBlob((blob) => {
+              const files = blob ? [new File([blob], `hall-pass-${code.slice(0, 7)}.png`, { type: 'image/png' })] : [];
+              const data: ShareData = files.length && nav.canShare?.({ files }) ? { text, files } : { text };
+              void nav.share(data).catch(() => undefined);
+            }, 'image/png');
+          },
+        });
+      }
+    }
+    items.push({ kind: 'button', label: 'BACK', onPick: back });
+    this.ui.show({
+      id: 'share',
+      kicker: 'Share',
+      title: 'Hall Report',
+      body: [img, el('pre', 'hp-share-text', text)],
+      items,
+      row: true,
+      onBack: back,
     });
   }
 
@@ -866,8 +1077,10 @@ export class App {
       let steps = 0;
       while (this.acc >= SIM_DT && steps < MAX_STEPS) {
         takeSnapshot(sim, this.prev);
+        this.recorder?.push(this.tick);
         const ev = step(sim, this.tick);
         if (ev.length) this.onEvents(ev);
+        if (!attract) this.afterStep(sim);
         this.acc -= SIM_DT;
         steps++;
         if (this.bot && (attract || this.autopilot !== null)) {
@@ -886,6 +1099,12 @@ export class App {
     this.actors.update(this.prev, sim, alpha, this.camera.cones, this.phase === 'paused' ? 0 : dt);
     this.fx!.update(this.phase === 'paused' ? 0 : dt);
     this.snacks!.update(dt);
+    if (this.ghost) {
+      const g = this.ghost;
+      const gs = g.sim.student;
+      const a = alpha;
+      g.view.update(g.px + (gs.x - g.px) * a, g.pz + (gs.z - g.pz) * a, gs.yaw, gs.posture, g.sim.phase === 'playing' && gs.hidden < 0, this.phase === 'paused' ? 0 : dt);
+    }
     const f = this.actors.focus;
     if (this.phase === 'intro' && !this.store.data.settings.reducedMotion) {
       // After a beat over the whole school, glide down to the student.
@@ -899,6 +1118,17 @@ export class App {
     this.view.update(dt, f.x, f.z, this.camera.walls, this.viewPts);
     this.renderer.render(dt);
     if (!this.hud.root.hidden) this.updateHud();
+  }
+
+  /** Per sim tick of a player run: sample the route for the share card, advance the ghost. */
+  private afterStep(sim: SimState): void {
+    if (sim.tick % 15 === 0 && sim.student.hidden < 0) this.path.push(Math.round(sim.student.x * 10) / 10, Math.round(sim.student.z * 10) / 10);
+    const g = this.ghost;
+    if (g && g.sim.phase === 'playing') {
+      g.px = g.sim.student.x;
+      g.pz = g.sim.student.z;
+      step(g.sim, g.player.next());
+    }
   }
 
   private placeCamera(snap: boolean, dt = 0, stiffness = 9): void {
@@ -935,6 +1165,7 @@ export class App {
       if (e.t === 'snack') this.snacks?.take(e.index);
       if (e.t === 'end') this.onEnd(e.phase);
       if (quiet) continue;
+      if (e.t === 'caught' && !e.passUsed) this.busts.push(this.sim!.student.x, this.sim!.student.z);
       if (e.t === 'caught') {
         const who = plan.staff[e.staff]!.name;
         if (e.passUsed) this.flash(`${who}: "Oh — carry on."`, 'You showed your hall pass.');
@@ -1087,14 +1318,20 @@ export class App {
         for (let i = 0; i < seconds * 60 && sim.phase === 'playing'; i++) {
           takeSnapshot(sim, this.prev);
           const input = this.bot && this.autopilot !== null ? this.bot.decide(sim) : { moveX: 0, moveY: 0, buttons: 0 };
+          this.recorder?.push(input);
           const ev = step(sim, input);
           if (ev.length) this.onEvents(ev);
+          if (this.mode.kind !== 'attract') this.afterStep(sim);
         }
       },
       panel: (open: boolean) => this.hud.togglePanel(open),
       stats: () => ({ ...this.renderer.stats(), ...(this.view?.stats ?? {}), cut: this.view?.cutCount() ?? 0, focus: this.actors ? [this.actors.focus.x, this.actors.focus.z] : null }),
       ready: () => this.sim !== null,
       audio: () => this.audio,
+      code: () => (this.report ? this.runCode() : null),
+      record: () => this.lastRecording,
+      ghost: () => (this.ghost ? { x: this.ghost.sim.student.x, z: this.ghost.sim.student.z, phase: this.ghost.sim.phase, score: this.ghost.score } : null),
+      share: () => this.showShare(),
     };
   }
 

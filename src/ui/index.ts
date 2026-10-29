@@ -39,6 +39,8 @@ export interface ScreenSpec {
   onAny?: () => void;
   /** Lighter backdrop (the 3D scene shows through). */
   clear?: boolean;
+  /** A text field (challenge codes). Enter submits; Esc goes back. What's typed is only ever read as text. */
+  input?: { label: string; value: string; placeholder: string; maxLength: number; error?: string | null; onSubmit: (value: string) => void };
 }
 
 /** Tiny DOM helper: text always via textContent. */
@@ -78,6 +80,30 @@ export class Ui {
     return !this.root.hidden;
   }
 
+  private field: HTMLInputElement | null = null;
+
+  /** Show (or clear) the input field's error line without rebuilding the screen. */
+  setInputError(msg: string | null): void {
+    const wrap = this.field?.parentElement;
+    if (!wrap) return;
+    let e = wrap.querySelector('.hp-error');
+    if (!msg) {
+      e?.remove();
+      return;
+    }
+    if (!e) {
+      e = el('small', 'hp-error');
+      wrap.append(e);
+    }
+    e.textContent = msg;
+    this.field?.focus({ preventScroll: true });
+  }
+
+  /** Current text of the screen's input field ('' if none). */
+  get inputValue(): string {
+    return this.field?.value ?? '';
+  }
+
   get screenId(): string | null {
     return this.visible ? (this.spec?.id ?? null) : null;
   }
@@ -108,6 +134,31 @@ export class Ui {
       if (spec.subtitle) screen.append(el('p', 'hp-sub', spec.subtitle));
     }
     for (const b of spec.body ?? []) if (b) screen.append(b);
+    this.field = null;
+    if (spec.input) {
+      const inp = spec.input;
+      const wrap = el('label', 'hp-field', undefined, [el('span', '', inp.label)]);
+      const f = document.createElement('input');
+      f.type = 'text';
+      f.value = inp.value;
+      f.placeholder = inp.placeholder;
+      f.maxLength = inp.maxLength;
+      f.autocomplete = 'off';
+      f.spellcheck = false;
+      f.setAttribute('autocapitalize', 'characters');
+      f.setAttribute('enterkeyhint', 'go');
+      f.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          this.sound?.('confirm');
+          inp.onSubmit(f.value);
+        }
+      });
+      wrap.append(f);
+      if (inp.error) wrap.append(el('small', 'hp-error', inp.error));
+      screen.append(wrap);
+      this.field = f;
+    }
     const list = el('div', `hp-items${spec.row ? ' hp-row' : ''}`);
     this.nodes = [];
     this.choiceVals = [];
@@ -152,6 +203,17 @@ export class Ui {
     });
     if (spec.items.length > 0) screen.append(list);
     this.root.append(screen);
+    if (this.field) {
+      const f = this.field;
+      setTimeout(() => {
+        try {
+          f.focus({ preventScroll: true });
+          f.setSelectionRange(f.value.length, f.value.length);
+        } catch {
+          /* not focusable (hidden) */
+        }
+      }, 30);
+    }
     this.refreshChoices();
     this.setFocus(Math.min(spec.focus ?? 0, Math.max(0, spec.items.length - 1)));
   }
