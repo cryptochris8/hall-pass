@@ -63,4 +63,4 @@ Note the numbers that feel best.
 
 Screenshots: `node tools/shot.mjs "/?test=1&seed=11&tier=4" shots/x.png --mobile --w 844 --h 390`.
 
-Not deployed. Publishing (Netlify) needs Chris's explicit approval each time.
+Live at https://hall-pass1.netlify.app (Netlify site `hall-pass1`, connected to this repo: every push to `main` deploys). Publishing needs Chris's explicit approval each time, so changes go to a branch until he approves.
