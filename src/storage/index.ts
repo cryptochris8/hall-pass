@@ -43,6 +43,8 @@ export interface Settings {
   muted: boolean;
   /** Race the ghost of your best run on a school you've cleared before. */
   ghosts: boolean;
+  /** The evacuation-map mini-map in the top-right corner. */
+  minimap: boolean;
 }
 
 export interface SaveData {
@@ -71,7 +73,7 @@ export function defaultSave(): SaveData {
     records: {},
     daily: {},
     totals: { runs: 0, ghosts: 0, detentions: 0, snacks: 0, xp: 0 },
-    settings: { camera: 'close', walls: 'occlude', cones: true, reducedMotion: false, music: 0.8, sfx: 1, muted: false, ghosts: true },
+    settings: { camera: 'close', walls: 'occlude', cones: true, reducedMotion: false, music: 0.8, sfx: 1, muted: false, ghosts: true, minimap: true },
     locker: { look: null, nickname: '' },
   };
 }
@@ -137,6 +139,7 @@ export function sanitize(raw: unknown): SaveData {
       sfx: typeof s.sfx === 'number' && Number.isFinite(s.sfx) ? Math.min(1, Math.max(0, s.sfx)) : 1,
       muted: s.muted === true,
       ghosts: s.ghosts !== false,
+      minimap: s.minimap !== false,
     };
   }
   if (isObj(raw.locker)) {

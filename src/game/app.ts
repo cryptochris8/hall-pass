@@ -32,6 +32,7 @@ import { drawFloorPlan, planPicture, shareText } from '../share/card';
 import { Player, Recorder, type Recording } from '../share/ghost';
 import { dailyStreak, GhostStore, ghostKey, recordRun, Store, type CameraPreset } from '../storage';
 import { Ui, el, type Item, type ScreenSpec } from '../ui';
+import { Minimap } from '../ui/minimap';
 import { helpGrid, missionCard, reportCard, table } from '../ui/screens';
 import { DIFFICULTY_NAME, DIFFICULTY_NOTE, GOAL_LINE, MISSION_NAME, TIER_NAME, TIER_NOTE, clock } from '../ui/text';
 import { buildSnacks, buildStealthFx, type SnackView, type StealthFx } from '../world/fx';
@@ -110,6 +111,7 @@ export class App {
   private readonly renderer: GameRenderer;
   private readonly input: InputManager;
   private readonly hud: Hud;
+  private readonly minimap: Minimap;
   private readonly ui: Ui;
   private readonly store = new Store();
   private readonly schools = new Schools();
@@ -222,6 +224,7 @@ export class App {
       params.debug,
     );
     this.hud.root.hidden = true;
+    this.minimap = new Minimap(this.hud.root);
     this.ui = new Ui(root);
     this.ui.sound = (k) => this.audio.play(k === 'move' ? 'uiMove' : k === 'confirm' ? 'uiConfirm' : 'uiBack');
 
@@ -719,6 +722,17 @@ export class App {
         },
         {
           kind: 'choice',
+          label: 'Mini-map',
+          sub: 'The school plan in the corner: you, the goal, staff near you or on alert',
+          options: onOff,
+          value: s.minimap ? 'on' : 'off',
+          onChange: (v) => {
+            s.minimap = v === 'on';
+            save();
+          },
+        },
+        {
+          kind: 'choice',
           label: 'Ghost races',
           sub: 'Your best run on a school races you when you play it again',
           options: onOff,
@@ -746,13 +760,13 @@ export class App {
           onPick: () => {
             if (!this.resetArmed) {
               this.resetArmed = true;
-              this.showSettings(back, 7);
+              this.showSettings(back, 8);
               return;
             }
             this.resetArmed = false;
             this.store.reset();
             this.applyVolumes();
-            this.showSettings(back, 7);
+            this.showSettings(back, 8);
           },
         },
         { kind: 'button', label: 'BACK', onPick: () => ((this.resetArmed = false), back()) },
@@ -1358,6 +1372,8 @@ export class App {
       return this.proj.visible ? { x: this.proj.x, y: this.proj.y, level: st2.level } : null;
     });
     this.hud.markers(pts);
+    this.minimap.setVisible(this.store.data.settings.minimap);
+    this.minimap.update(plan, s);
   }
 
   private badgeFor(s: SimState): string | null {

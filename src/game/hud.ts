@@ -90,6 +90,11 @@ const CSS = `
 .hp-state .hp-chase { background: #c8372d; }
 .hp-state .hp-hidden { background: #2e6b52; }
 .hp-state .hp-badge { background: #2e8bff; }
+.hp-minimap { position: absolute; right: max(12px, env(safe-area-inset-right)); top: calc(max(10px, env(safe-area-inset-top)) + 54px);
+  width: 220px; border: 3px solid #1d2433; border-radius: 10px; overflow: hidden; background: #f4f1ea;
+  box-shadow: 0 6px 18px rgba(0,0,0,.35); opacity: .95; }
+.hp-minimap canvas { display: block; width: 100%; height: 100%; }
+@media (max-width: 700px), (max-height: 500px) { .hp-minimap { width: 118px; border-width: 2px; top: calc(max(8px, env(safe-area-inset-top)) + 46px); } }
 .hp-pausebtn { font-size: 16px !important; font-weight: 900 !important; letter-spacing: .05em; }
 @media (pointer: coarse) { .hp-prompt { bottom: auto; top: calc(max(10px, env(safe-area-inset-top)) + 56px); } }
 .hp-hint { position: absolute; left: 50%; bottom: max(10px, env(safe-area-inset-bottom)); transform: translateX(-50%);
