@@ -71,11 +71,19 @@ export function generateSchool(config: GenConfig): SchoolPlan {
   }
   const budget = { left: VALIDATION_BUDGET };
   let unvalidated: SchoolPlan | null = null;
+  let triedTighter = false;
   for (let attempt = 0; attempt < MAX_TRIES && budget.left > 0; attempt++) {
     const plan = tryGenerate(config, attempt, budget);
     if (plan && plan.referenceRoute) return plan;
     if (plan && config.validate === false) return plan;
     if (plan && !unvalidated) unvalidated = plan;
+    // After a few failed checks, try the first school at the next tighter clearance before re-rolling further: one
+    // check instead of up to a dozen more (FRESHMAN's wide margins fail most; its staff stay slower anyway).
+    if (!triedTighter && unvalidated && VALIDATION_BUDGET - budget.left >= EARLY_TIGHTER) {
+      triedTighter = true;
+      const ok = acceptTighter(unvalidated, config);
+      if (ok) return ok;
+    }
   }
   const fb = FALLBACK_SEEDS[config.tier];
   const fbBudget = { left: VALIDATION_BUDGET };
@@ -83,23 +91,27 @@ export function generateSchool(config: GenConfig): SchoolPlan {
     const plan = tryGenerate({ ...config, seed: fb }, attempt, fbBudget);
     if (plan && (plan.referenceRoute || config.validate === false)) return { ...plan, ...namesFor(config), seed: config.seed, fallback: true };
   }
-  // Nothing validated at this difficulty's clearance: accept the first layout if it validates at the next tighter
-  // one (FRESHMAN demands the widest margins, so its hardest schools can fail where JUNIOR's pass).
-  if (unvalidated) {
-    const d = config.difficulty ?? 'junior';
-    const tighter = d === 'freshman' ? 'junior' : d === 'junior' ? 'senior' : null;
-    if (tighter) {
-      const v = validatePlan(unvalidated, d, { clearance: tighter });
-      if (v.ok) {
-        unvalidated.referenceRoute = v.route;
-        unvalidated.snacks = placeSnacks(unvalidated, floodOpen(unvalidated.fine, unvalidated.anchors.start!.x, unvalidated.anchors.start!.z), new Rng(hashInts(config.seed, 0, SYS_SNACK)));
-        return unvalidated;
-      }
-    }
-    // Still nothing: ship it (reachability-checked), flagged, with no route.
-    return { ...unvalidated, fallback: true };
-  }
+  // Nothing validated: ship the first layout (reachability-checked), flagged, with no route.
+  if (unvalidated) return (!triedTighter && acceptTighter(unvalidated, config)) || { ...unvalidated, fallback: true };
   throw new Error(`generateSchool: tier ${config.tier} fallback seed failed`);
+}
+
+/** Failed checks before trying the first school at the next tighter clearance. */
+const EARLY_TIGHTER = 3;
+
+/**
+ * Accept a plan that failed at its difficulty's clearance if it validates at the next tighter one (FRESHMAN demands
+ * the widest margins, so its hardest schools can fail where JUNIOR's pass). Returns the plan with its route, or null.
+ */
+function acceptTighter(plan: SchoolPlan, config: GenConfig): SchoolPlan | null {
+  const d = config.difficulty ?? 'junior';
+  const tighter = d === 'freshman' ? 'junior' : d === 'junior' ? 'senior' : null;
+  if (!tighter) return null;
+  const v = validatePlan(plan, d, { clearance: tighter });
+  if (!v.ok) return null;
+  plan.referenceRoute = v.route;
+  plan.snacks = placeSnacks(plan, floodOpen(plan.fine, plan.anchors.start!.x, plan.anchors.start!.z), new Rng(hashInts(config.seed, 0, SYS_SNACK)));
+  return plan;
 }
 
 /** The school's name depends on the seed alone (not the attempt), so a SCHOOL WEEK keeps one name all week. */

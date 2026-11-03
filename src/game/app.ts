@@ -866,6 +866,8 @@ export class App {
     void this.schools.get(config).then((built) => {
       if (id !== this.loadId) return; // superseded
       this.startRun(built, false);
+      // While you play, the builder is idle: get the report's NEW SCHOOL ready (quick periods use seed + 1).
+      if (mode.kind === 'quick') this.schools.prefetch({ ...config, seed: (config.seed + 1) & 0x3fffff });
       if (this.params.autostart) {
         this.ui.hide();
         this.setPhase('playing');

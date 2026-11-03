@@ -239,17 +239,16 @@ export function validatePlan(
     return out;
   })();
   const buySteps = Math.ceil((MISSION_RULES.buySeconds * 60) / V_STEP) + 1;
-  const isBlocked = (t: number, i: number): boolean => {
-    if (t >= T) return true;
+  // Word offset and bit of every cell in a layer (the search asks millions of times; no divisions in the loop).
+  const cellWord = new Int32Array(N);
+  const cellBit = new Int32Array(N);
+  for (let i = 0; i < N; i++) {
     const c = i % cols;
-    const r = (i - c) / cols;
-    return (blocked[t * LW + r * RW + (c >>> 5)]! & (1 << (c & 31))) !== 0;
-  };
-  const isNoisy = (t: number, i: number): boolean => {
-    const c = i % cols;
-    const r = (i - c) / cols;
-    return (noisy[t * LW + r * RW + (c >>> 5)]! & (1 << (c & 31))) !== 0;
-  };
+    cellWord[i] = ((i - c) / cols) * RW + (c >>> 5);
+    cellBit[i] = 1 << (c & 31);
+  }
+  const isBlocked = (t: number, i: number): boolean => t >= T || (blocked[t * LW + cellWord[i]!]! & cellBit[i]!) !== 0;
+  const isNoisy = (t: number, i: number): boolean => (noisy[t * LW + cellWord[i]!]! & cellBit[i]!) !== 0;
   const walk = (c: number, r: number): boolean => openAt(plan.fine, c, r);
   if (opts.probe) {
     const at = (arr: Uint32Array, t: number, x: number, z: number): boolean => {
