@@ -45,6 +45,8 @@ export interface Settings {
   ghosts: boolean;
   /** The evacuation-map mini-map in the top-right corner. */
   minimap: boolean;
+  /** Footprint hints after 20 s without progress: 'auto' = FRESHMAN only (GDD §11). */
+  hints: 'auto' | 'on' | 'off';
 }
 
 export interface SaveData {
@@ -73,7 +75,7 @@ export function defaultSave(): SaveData {
     records: {},
     daily: {},
     totals: { runs: 0, ghosts: 0, detentions: 0, snacks: 0, xp: 0 },
-    settings: { camera: 'close', walls: 'occlude', cones: true, reducedMotion: false, music: 0.8, sfx: 1, muted: false, ghosts: true, minimap: true },
+    settings: { camera: 'close', walls: 'occlude', cones: true, reducedMotion: false, music: 0.8, sfx: 1, muted: false, ghosts: true, minimap: true, hints: 'auto' },
     locker: { look: null, nickname: '' },
   };
 }
@@ -140,6 +142,7 @@ export function sanitize(raw: unknown): SaveData {
       muted: s.muted === true,
       ghosts: s.ghosts !== false,
       minimap: s.minimap !== false,
+      hints: pick(s.hints, ['auto', 'on', 'off'] as const, 'auto'),
     };
   }
   if (isObj(raw.locker)) {

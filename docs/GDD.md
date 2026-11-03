@@ -356,6 +356,12 @@ Clearing a school week with an A average unlocks the next tier and its signature
   hold-to-toggle for sneak and sprint; adjustable game speed (0.8× / 1.0×) that marks the run but keeps it
   scoreable; full captions.
 
+**As built (hints).** `src/game/hints.ts`: the reference route is split into legs at each pickup; moving within
+1.8 m of a further point of the current leg, or collecting something, is progress. After 20 s without it (hiding,
+being walked back and buying don't count), white sneaker prints fade in along the next ~14 m of the route from the
+point nearest you, and fade out once you move on. Settings → Hints: AUTO (FRESHMAN only, the default), ON, OFF.
+The prints follow the route's path, not its timing: they show *a* way through, not when to go.
+
 ## 12. Bot & testing
 
 - **Bot** (`src/sim/bot.ts`): plays through `GameControls` like a player. It follows the validator's reference route,

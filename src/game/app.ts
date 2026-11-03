@@ -33,6 +33,8 @@ import { Player, Recorder, type Recording } from '../share/ghost';
 import { dailyStreak, GhostStore, ghostKey, recordRun, Store, type CameraPreset } from '../storage';
 import { Ui, el, type Item, type ScreenSpec } from '../ui';
 import { Minimap } from '../ui/minimap';
+import { buildHints, type HintView } from '../world/hints';
+import { HintTracker, hintsOn } from './hints';
 import { helpGrid, missionCard, reportCard, table } from '../ui/screens';
 import { DIFFICULTY_NAME, DIFFICULTY_NOTE, GOAL_LINE, MISSION_NAME, TIER_NAME, TIER_NOTE, clock } from '../ui/text';
 import { buildSnacks, buildStealthFx, type SnackView, type StealthFx } from '../world/fx';
@@ -123,6 +125,11 @@ export class App {
   private path: number[] = [];
   private busts: number[] = [];
   private ghost: GhostRun | null = null;
+  /** Footprint hints for this run (null: off, or an attract run). */
+  private hints: HintTracker | null = null;
+  private hintView: HintView | null = null;
+  private hinting = false;
+  private hintToldOnce = false;
   private reportScreen: ScreenSpec | null = null;
   private codeDraft = '';
   /** LOCKER is open: the attract run holds still and the camera frames the student. */
@@ -743,6 +750,21 @@ export class App {
         },
         {
           kind: 'choice',
+          label: 'Hints',
+          sub: 'Footprints of a safe way through after 20 s stuck · Auto = FRESHMAN only',
+          options: [
+            { value: 'auto', label: 'AUTO' },
+            { value: 'on', label: 'ON' },
+            { value: 'off', label: 'OFF' },
+          ],
+          value: s.hints,
+          onChange: (v) => {
+            s.hints = v as typeof s.hints;
+            save();
+          },
+        },
+        {
+          kind: 'choice',
           label: 'Ghost races',
           sub: 'Your best run on a school races you when you play it again',
           options: onOff,
@@ -770,13 +792,13 @@ export class App {
           onPick: () => {
             if (!this.resetArmed) {
               this.resetArmed = true;
-              this.showSettings(back, 8);
+              this.showSettings(back, 9);
               return;
             }
             this.resetArmed = false;
             this.store.reset();
             this.applyVolumes();
-            this.showSettings(back, 8);
+            this.showSettings(back, 9);
           },
         },
         { kind: 'button', label: 'BACK', onPick: () => ((this.resetArmed = false), back()) },
@@ -884,6 +906,14 @@ export class App {
     this.ghost?.view.dispose();
     this.ghost = null;
     this.recorder = attract ? null : new Recorder();
+    this.hintView?.dispose();
+    this.hintView = null;
+    this.hinting = false;
+    this.hints = !attract && hintsOn(this.store.data.settings.hints, this.config.difficulty) ? new HintTracker(plan.referenceRoute) : null;
+    if (this.hints) {
+      this.hintView = buildHints();
+      this.renderer.scene.add(this.hintView.root);
+    }
     this.lastRecording = null;
     this.path = [];
     this.busts = [];
@@ -1237,6 +1267,7 @@ export class App {
     this.actors.update(this.prev, sim, alpha, this.camera.cones, this.phase === 'paused' ? 0 : dt);
     this.fx!.update(this.phase === 'paused' ? 0 : dt);
     this.snacks!.update(dt);
+    this.hintView?.update(this.phase === 'paused' ? 0 : dt);
     if (this.ghost) {
       const g = this.ghost;
       const gs = g.sim.student;
@@ -1260,6 +1291,17 @@ export class App {
 
   /** Per sim tick of a player run: sample the route for the share card, advance the ghost. */
   private afterStep(sim: SimState): void {
+    if (this.hints) {
+      const show = this.hints.tick(sim);
+      // Refresh the prints a few times a second while showing (the nearest stretch follows you).
+      if (show && (!this.hinting || sim.tick % 20 === 0)) this.hintView?.set(this.hints.footprints(sim));
+      if (!show && this.hinting) this.hintView?.set(null);
+      if (show && !this.hinting && !this.hintToldOnce) {
+        this.hintToldOnce = true;
+        this.flash('Stuck?', 'Follow the footprints: a way through, unseen if you keep to its pace.');
+      }
+      this.hinting = show;
+    }
     if (sim.tick % 15 === 0 && sim.student.hidden < 0) this.path.push(Math.round(sim.student.x * 10) / 10, Math.round(sim.student.z * 10) / 10);
     const g = this.ghost;
     if (g && g.sim.phase === 'playing') {
