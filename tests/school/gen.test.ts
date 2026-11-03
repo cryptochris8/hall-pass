@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FALLBACK_SEEDS, generateSchool, planHash } from '../../src/school/gen';
+import { FALLBACK_SEEDS, generateSchool, generateWeek, planHash } from '../../src/school/gen';
 import { floodOpen } from '../../src/school/gen/fine';
 import { TIERS } from '../../src/school/tiers';
 import { CELL_CORRIDOR, FINE, MISSION_IDS, type TierId } from '../../src/school/types';
@@ -15,6 +15,30 @@ describe('generateSchool', () => {
       expect(a.name).toBe(b.name);
     }
   });
+
+  it('SCHOOL WEEK: five days, one building, every day proven fair at its own difficulty', () => {
+    const days = [
+      { mission: 'vending', difficulty: 'freshman' },
+      { mission: 'locker', difficulty: 'freshman' },
+      { mission: 'pizza', difficulty: 'junior' },
+      { mission: 'gym', difficulty: 'junior' },
+      { mission: 'principal', difficulty: 'junior' },
+    ] as const;
+    const plans = generateWeek(4242, 1, days);
+    expect(plans).toHaveLength(5);
+    const building = (p: (typeof plans)[number]): string => Array.from(p.cells).join(',') + p.rooms.map((r) => `${r.kind}${r.rect.c0},${r.rect.r0}`).join('');
+    for (const p of plans) {
+      expect(building(p)).toBe(building(plans[0]!));
+      expect(p.name).toBe(plans[0]!.name);
+      expect(p.referenceRoute).not.toBeNull();
+    }
+    expect(plans.map((p) => p.mission)).toEqual(days.map((d) => d.mission));
+    // Every room a mission needs is in the one building.
+    for (const k of ['office', 'principal', 'gym', 'cafeteria'] as const) expect(plans[0]!.rooms.some((r) => r.kind === k)).toBe(true);
+    // A single day through generateSchool is the same plan as in the week.
+    const one = generateSchool({ seed: 4242, tier: 1, mission: 'pizza', difficulty: 'junior', week: days });
+    expect(planHash(one)).toBe(planHash(plans[2]!));
+  }, 120_000);
 
   it('a seed keeps its school name whatever the mission (one school all SCHOOL WEEK)', () => {
     for (const tier of TIER_IDS) {

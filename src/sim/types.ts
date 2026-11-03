@@ -20,6 +20,11 @@ export interface RunConfig {
   difficulty: Difficulty;
   /** yyyymmdd for a DAILY PERIOD, else null. */
   daily: number | null;
+  /**
+   * SCHOOL WEEK: the week's five days (mission + difficulty). Present = one building for the whole week (the
+   * generator builds all five days together). The sim itself never reads it.
+   */
+  week?: readonly { mission: MissionId; difficulty: Difficulty }[];
 }
 
 /** TickInput.buttons bits. */

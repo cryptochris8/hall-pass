@@ -73,8 +73,9 @@ export function weekPlan(seed: number): WeekDay[] {
 }
 
 export function weekConfig(seed: number, tier: TierId, day: number): RunConfig {
-  const d = weekPlan(seed)[day]!;
-  return { seed, tier, mission: d.mission, difficulty: d.difficulty, daily: null };
+  const days = weekPlan(seed);
+  const d = days[day]!;
+  return { seed, tier, mission: d.mission, difficulty: d.difficulty, daily: null, week: days.map((w) => ({ mission: w.mission, difficulty: w.difficulty })) };
 }
 
 /** The week grade: the average of the five day grades (grade points), as a letter. */

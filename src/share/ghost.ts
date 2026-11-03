@@ -11,7 +11,8 @@ import { SIM_VERSION } from '../sim/types';
 
 export interface Recording {
   v: number;
-  config: Pick<RunConfig, 'seed' | 'tier' | 'mission' | 'difficulty'>;
+  /** `week`: recorded on a SCHOOL WEEK building (a different school from a quick period with the same seed). */
+  config: Pick<RunConfig, 'seed' | 'tier' | 'mission' | 'difficulty'> & { week?: boolean };
   /** Ticks recorded. */
   ticks: number;
   /** RLE inputs, base64: repeated [moveX i8, moveY i8, buttons u8, count u16 LE]. */
@@ -39,7 +40,7 @@ export class Recorder {
     this.count = 1;
   }
 
-  finish(config: Recording['config'], score: number): Recording {
+  finish(config: Pick<RunConfig, 'seed' | 'tier' | 'mission' | 'difficulty' | 'week'>, score: number): Recording {
     const runs = this.runs.slice();
     if (this.count > 0) runs.push(this.last, this.count);
     const bytes = new Uint8Array((runs.length / 2) * 5);
@@ -52,7 +53,9 @@ export class Recorder {
       bytes[o + 3] = n & 255;
       bytes[o + 4] = (n >>> 8) & 255;
     }
-    return { v: SIM_VERSION, config: { ...config }, ticks: this.ticks, data: toBase64(bytes), score };
+    const c: Recording['config'] = { seed: config.seed, tier: config.tier, mission: config.mission, difficulty: config.difficulty };
+    if (config.week) c.week = true;
+    return { v: SIM_VERSION, config: c, ticks: this.ticks, data: toBase64(bytes), score };
   }
 }
 
@@ -105,7 +108,7 @@ export function validRecording(raw: unknown): Recording | null {
   if (typeof c.seed !== 'number' || typeof c.tier !== 'number' || typeof c.mission !== 'string' || typeof c.difficulty !== 'string') return null;
   return {
     v: SIM_VERSION,
-    config: { seed: c.seed, tier: c.tier as RunConfig['tier'], mission: c.mission as RunConfig['mission'], difficulty: c.difficulty as RunConfig['difficulty'] },
+    config: { seed: c.seed, tier: c.tier as RunConfig['tier'], mission: c.mission as RunConfig['mission'], difficulty: c.difficulty as RunConfig['difficulty'], ...(c.week === true ? { week: true } : {}) },
     ticks: r.ticks,
     data: r.data,
     score: typeof r.score === 'number' && Number.isFinite(r.score) ? r.score : 0,

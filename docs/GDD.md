@@ -57,8 +57,12 @@ bell rings, or the detention slip slams down) → **Hall Report** (§8) → RETR
 five everyday missions (not the finale), at JUNIOR, so it really is the same run for everyone; the GDD's "rotates
 through the unlocked tiers" would have made it differ per player. Numbering: 2026-09-01 is #1. SCHOOL WEEK plays
 FRESHMAN rules Monday–Tuesday and JUNIOR Wednesday–Friday; Monday–Thursday are four of the five everyday missions
-(seeded per week), Friday the PRINCIPAL'S OFFICE. The school keeps its name all week, but the floor plan is drawn
-per mission (the generator places the mission's room first), so the building changes day to day — a known gap.
+(seeded per week), Friday the PRINCIPAL'S OFFICE. **One building all week**: a week layout places every mission's
+room (gym, cafeteria, the principal's office with the front office beside it), each 40–85 % of the longest corridor
+distance from your classroom, and the generator builds all five days together, picking the first building where
+every day is proven fair at its own difficulty (`generateWeek`). Days differ only in the job, the staff and the
+mission props. A week takes a few seconds to build (once; started in the background when the week screen opens);
+its days then load instantly. A challenge code from a week day replays the job on a regular (non-week) building.
 CHALLENGE CODE and LOCKER are not in the menu yet (M6 and M5).
 
 ## 2. The student (the player — cosmetic only)

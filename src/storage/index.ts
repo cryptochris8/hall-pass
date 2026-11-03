@@ -249,8 +249,8 @@ export const GHOST_KEY = 'hall-pass:ghosts:v1';
 export const MAX_GHOSTS = 12;
 
 /** The ghost slot of a run: one exact school (seed + tier + mission + difficulty). */
-export function ghostKey(c: { seed: number; tier: number; mission: string; difficulty: string }): string {
-  return `${c.seed}:${c.tier}:${c.mission}:${c.difficulty}`;
+export function ghostKey(c: { seed: number; tier: number; mission: string; difficulty: string; week?: unknown }): string {
+  return `${c.seed}:${c.tier}:${c.mission}:${c.difficulty}${c.week ? ':week' : ''}`;
 }
 
 /** Best-run recordings in localStorage, guarded like the save. Anything unreadable is dropped. */

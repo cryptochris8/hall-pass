@@ -533,6 +533,11 @@ export class App {
     const w = save.week;
     const tier = this.weekTier ?? w?.tier ?? save.unlocked;
     const active = w && w.tier === tier && w.day < 5 ? w : null;
+    // A week builds all five days in one go (one building): start on the next one while you read this screen.
+    if (!active) {
+      if (!this.nextWeek || this.nextWeek.tier !== tier) this.nextWeek = { tier, seed: (Math.random() * 0x3fffff) >>> 0 };
+      this.schools.prefetch(weekConfig(this.nextWeek.seed, tier, 0));
+    }
     const finished = w && w.tier === tier && w.day >= 5 ? w : null;
     const plan = active ? weekPlan(active.seed) : null;
     if (active) this.schools.prefetch(weekConfig(active.seed, active.tier, active.day));
@@ -579,9 +584,14 @@ export class App {
     });
   }
 
+  /** The next week's school, picked (and prefetched) when the week screen opens. */
+  private nextWeek: { tier: TierId; seed: number } | null = null;
+
   private newWeek(tier: TierId): void {
     const save = this.store.data;
-    save.week = { tier, seed: (Math.random() * 0x3fffff) >>> 0, day: 0, grades: [null, null, null, null, null], scores: [0, 0, 0, 0, 0] };
+    const seed = this.nextWeek?.tier === tier ? this.nextWeek.seed : (Math.random() * 0x3fffff) >>> 0;
+    this.nextWeek = null;
+    save.week = { tier, seed, day: 0, grades: [null, null, null, null, null], scores: [0, 0, 0, 0, 0] };
     this.store.save();
     this.playWeekDay(0);
   }
@@ -824,8 +834,10 @@ export class App {
       this.ui.show({
         id: 'loading',
         kicker: TIER_NAME[config.tier],
-        title: 'Building the school…',
-        subtitle: 'Checking there’s a way through unseen.',
+        title: config.week ? 'Building your school for the week…' : 'Building the school…',
+        subtitle: config.week
+          ? 'All five days at once, in one building, each checked for a way through unseen. This takes a few seconds, once a week.'
+          : 'Checking there’s a way through unseen.',
         items: [],
       });
     }

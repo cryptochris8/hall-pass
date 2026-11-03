@@ -201,7 +201,8 @@ const ROOM_TAGS: Partial<Record<RoomKind, RoomTag[]>> = {
  * from the start door), bathrooms, extras, then classrooms on every remaining corridor-facing cell.
  * Returns false when the mission distance rule can't be met (the caller re-rolls).
  */
-export function placeRooms(l: Layout, tier: TierDef, mission: MissionId, rng: Rng): boolean {
+export function placeRooms(l: Layout, tier: TierDef, mission: MissionId | 'week', rng: Rng): boolean {
+  if (mission === 'week') return placeWeekRooms(l, tier, rng);
   const missionRoom = MISSION_ROOM[mission];
   const extras = shuffled(tier.extras, rng).slice(0, rng.int(tier.extraCount[0], tier.extraCount[1]));
   const big: RoomKind[] = [];
@@ -263,6 +264,59 @@ export function placeRooms(l: Layout, tier: TierDef, mission: MissionId, rng: Rn
   for (let k = 0; k < 2; k++) if (!placeOne('bathroom', ['safe'])) return false;
   for (const kind of extras) if (!l.rooms.some((r) => r.kind === kind)) placeOne(kind, [...(ROOM_TAGS[kind] ?? [])]);
   // Fill: classrooms everywhere a corridor still has an empty neighbour.
+  for (let guard = 0; guard < 200; guard++) if (!placeOne('classroom', [])) break;
+  return true;
+}
+
+/**
+ * SCHOOL WEEK layout (GDD §1: five periods at one school): every room any mission needs — gym, cafeteria, the
+ * principal's office with the front office beside it — none tagged 'mission' (the generator tags today's). The
+ * rooms a mission sends you to must be a real trip that fits the bell: their doors 40–85 % of the longest corridor
+ * distance from your classroom. Returns false when that can't be met (the caller re-rolls the layout).
+ */
+function placeWeekRooms(l: Layout, tier: TierDef, rng: Rng): boolean {
+  const extras = shuffled(tier.extras, rng).slice(0, rng.int(tier.extraCount[0], tier.extraCount[1]));
+  const placeOne = (kind: RoomKind, tags: RoomTag[], filter?: (p: Placement) => boolean): LayoutRoom | null => {
+    const [w, h] = ROOM_SIZE[kind];
+    let cands = placements(l, w, h);
+    if (filter) cands = cands.filter(filter);
+    if (cands.length === 0) return null;
+    return addRoom(l, kind, rng.pick(cands), tags, rng);
+  };
+  for (const kind of ['gym', 'cafeteria'] as const) if (!placeOne(kind, [...(ROOM_TAGS[kind] ?? [])])) return false;
+  for (const k of extras) if (ROOM_SIZE[k][0] * ROOM_SIZE[k][1] >= 4 && !l.rooms.some((r) => r.kind === k)) placeOne(k, [...(ROOM_TAGS[k] ?? [])]);
+  const start = placeOne('classroom', ['start']);
+  if (!start) return false;
+  const sd = start.doors[0]!;
+  const dist = corridorDistances(l, sd.cc, sd.cr);
+  let max = 0;
+  for (let i = 0; i < dist.length; i++) if (dist[i]! > max) max = dist[i]!;
+  // A real trip, but one that fits the bell: 40–85 % of the longest corridor distance (normal schools use 55–80 %
+  // for their one mission room; a week has four to place).
+  const lo = Math.floor(max * 0.4);
+  const hi = Math.ceil(max * 0.85);
+  const far = (cc: number, cr: number): boolean => dist[cr * l.cols + cc]! >= lo && dist[cr * l.cols + cc]! <= hi;
+  // The big rooms were placed first (they need the space): check they ended up far enough.
+  for (const kind of ['gym', 'cafeteria'] as const) {
+    const room = l.rooms.find((r) => r.kind === kind)!;
+    if (!room.doors.some((e) => far(e.cc, e.cr))) return false;
+  }
+  const principal = placeOne('principal', [...(ROOM_TAGS.principal ?? [])], (p) => p.edges.some((e) => far(e.cc, e.cr)));
+  if (!principal) return false;
+  const pd = principal.doors[0]!;
+  const near = corridorDistances(l, pd.cc, pd.cr);
+  const close = (p: Placement): boolean => p.edges.some((e) => near[e.cr * l.cols + e.cc]! >= 0 && near[e.cr * l.cols + e.cc]! <= 2);
+  const office = placeOne('office', [], (p) => close(p) && p.edges.some((e) => far(e.cc, e.cr))) ?? placeOne('office', [], close);
+  if (!office) return false;
+  // PHONE JAIL's room is the office: keep only its far doors so that trip is real too.
+  const farDoors = office.doors.filter((e) => far(e.cc, e.cr));
+  if (farDoors.length > 0) office.doors = farDoors;
+  // LOCKER DROP needs a corridor cell in the usual 55–80 % band.
+  let band = false;
+  for (let i = 0; i < dist.length && !band; i++) band = dist[i]! >= Math.floor(max * 0.55) && dist[i]! <= Math.ceil(max * 0.8);
+  if (!band) return false;
+  for (let k = 0; k < 2; k++) if (!placeOne('bathroom', ['safe'])) return false;
+  for (const kind of extras) if (!l.rooms.some((r) => r.kind === kind)) placeOne(kind, [...(ROOM_TAGS[kind] ?? [])]);
   for (let guard = 0; guard < 200; guard++) if (!placeOne('classroom', [])) break;
   return true;
 }

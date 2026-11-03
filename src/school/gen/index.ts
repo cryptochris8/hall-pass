@@ -10,12 +10,12 @@
 // tier's fallback seed is used.
 // ─────────────────────────────────────────────────────────────────────────────
 import { Rng, hashInts } from '../../core/rng';
-import { BELL_SECONDS, TIERS } from '../tiers';
-import type { Difficulty, MissionId, PaEvent, PaEventId, Room, SchoolPlan, StaffSpawn, TierId } from '../types';
+import { BELL_SECONDS, MISSION_ROOM, TIERS } from '../tiers';
+import type { Difficulty, FineGrid, MissionId, PaEvent, PaEventId, Room, SchoolPlan, StaffSpawn, TierId } from '../types';
 import { validatePlan } from '../validate';
 import { buildFine, floodOpen } from './fine';
-import { furnish } from './furnish';
-import { buildSpine, growBranches, newLayout, placeRooms } from './layout';
+import { furnish, type Furnished } from './furnish';
+import { buildSpine, growBranches, newLayout, placeRooms, type Layout } from './layout';
 import { schoolName } from './names';
 import { placeSnacks } from './snacks';
 import { placeStaff } from './staff';
@@ -28,6 +28,18 @@ export interface GenConfig {
   difficulty?: Difficulty;
   /** Run the fairness validator (default true). Layout-only tests turn it off. */
   validate?: boolean;
+  /**
+   * SCHOOL WEEK: one building for every mission (GDD §1). The layout then depends on (seed, tier) only — every
+   * mission's room is placed, and a layout attempt only counts if it works for all six missions — so each day of
+   * the week is the same school with a different job (and different staff).
+   */
+  week?: readonly WeekDaySpec[];
+}
+
+/** One day of a SCHOOL WEEK schedule (src/game/modes.ts weekPlan). */
+export interface WeekDaySpec {
+  mission: MissionId;
+  difficulty: Difficulty;
 }
 
 const MAX_TRIES = 32;
@@ -52,6 +64,11 @@ const SYS_PA = 0x5c4006;
 const SYS_SNACK = 0x5c4007;
 
 export function generateSchool(config: GenConfig): SchoolPlan {
+  if (config.week) {
+    const plans = generateWeek(config.seed, config.tier, config.week, config.validate);
+    const i = config.week.findIndex((d) => d.mission === config.mission && d.difficulty === (config.difficulty ?? 'junior'));
+    return plans[Math.max(0, i)]!;
+  }
   const budget = { left: VALIDATION_BUDGET };
   let unvalidated: SchoolPlan | null = null;
   for (let attempt = 0; attempt < MAX_TRIES && budget.left > 0; attempt++) {
@@ -90,11 +107,17 @@ function namesFor(config: GenConfig): { name: string; motto: string } {
   return schoolName(config.tier, new Rng(hashInts(config.seed, 0, SYS_NAME)));
 }
 
-/**
- * One layout attempt. Returns the validated plan, an unvalidated plan (validation off, or every staff re-roll
- * failed — `referenceRoute` null), or null when a layout step failed.
- */
-function tryGenerate(config: GenConfig, attempt: number, budget: { left: number }): SchoolPlan | null {
+interface LayoutStep {
+  l: Layout;
+  fine: FineGrid;
+  rooms: Room[];
+  f: Furnished;
+  reach: Uint8Array;
+  reachable: (x: number, z: number) => boolean;
+}
+
+/** Steps 1–5 of one attempt: layout, fine grid, furnishing, reachability. Null when a step failed. */
+function layoutStep(config: GenConfig, attempt: number): LayoutStep | null {
   const tier = TIERS[config.tier];
   const sub = (sys: number): Rng => new Rng(hashInts(config.seed, attempt, sys));
   const rngL = sub(SYS_LAYOUT);
@@ -102,11 +125,16 @@ function tryGenerate(config: GenConfig, attempt: number, budget: { left: number 
   const l = newLayout(tier.cols, tier.rows);
   buildSpine(l, rngL.pick(tier.spines), rngL);
   growBranches(l, rngL.int(tier.corridorCells[0], tier.corridorCells[1]), rngL);
-  if (!placeRooms(l, tier, config.mission, rngL)) return fail('rooms');
+  if (!placeRooms(l, tier, config.week ? 'week' : config.mission, rngL)) return fail('rooms');
+  // Week layouts place every mission room untagged; today's mission room gets its tag here.
+  if (config.week) {
+    const kind = MISSION_ROOM[config.mission];
+    const room = kind ? l.rooms.find((r) => r.kind === kind) : undefined;
+    if (room) room.tags = [...room.tags, 'mission'];
+  }
 
   const { fine, doors } = buildFine(l, sub(SYS_FINE));
   const rooms: Room[] = l.rooms.map((r) => ({ id: r.id, kind: r.kind, rect: r.rect, doors: doors[r.id]!, tags: r.tags }));
-  const bellTicks = BELL_SECONDS[config.mission] * 60;
   const f = furnish(l, rooms, fine, tier, config.mission, sub(SYS_FURNISH));
   if (!f) return fail('furnish');
   const start = f.anchors.start!;
@@ -127,13 +155,30 @@ function tryGenerate(config: GenConfig, attempt: number, budget: { left: number 
     }
   }
   for (const [id, a] of Object.entries(f.anchors)) if (a && !reachable(a.x, a.z)) return fail(`anchor:${id}`);
+  return { l, fine, rooms, f, reach, reachable };
+}
 
+/**
+ * One layout attempt. Returns the validated plan, an unvalidated plan (validation off, or every staff re-roll
+ * failed — `referenceRoute` null), or null when a layout step failed.
+ */
+function tryGenerate(config: GenConfig, attempt: number, budget: { left: number }, staffTries = STAFF_TRIES): SchoolPlan | null {
+  const step = layoutStep(config, attempt);
+  if (!step) return null;
+  const { l, fine, rooms, f, reach, reachable } = step;
+  const tier = TIERS[config.tier];
+  const sub = (sys: number): Rng => new Rng(hashInts(config.seed, attempt, sys));
+  const bellTicks = BELL_SECONDS[config.mission] * 60;
   const names = namesFor(config);
   let first: SchoolPlan | null = null;
-  for (let s = 0; s < STAFF_TRIES; s++) {
+  for (let s = 0; s < staffTries; s++) {
     const salt = s * 7919;
     const staff = placeStaff(l, fine, rooms, tier, config.mission, f.anchors, bellTicks, sub(SYS_STAFF + salt));
-    if (!staff) return fail('staff:mission');
+    if (!staff) {
+      // A week can't re-roll its building for one day's staff: try the next staff roll instead.
+      if (config.week) continue;
+      return fail('staff:mission');
+    }
     if (staff.some((sp) => sp.archetype !== 'sweeper' && sp.route.some((w) => !reachable(w.x, w.z)))) {
       fail('staff:unreachable');
       continue;
@@ -157,7 +202,7 @@ function tryGenerate(config: GenConfig, attempt: number, budget: { left: number 
       throwables: [],
       pa: schedulePa(config.tier, staff, rooms, bellTicks, sub(SYS_PA + salt)),
       bellTicks,
-      rerolls: attempt * STAFF_TRIES + s,
+      rerolls: attempt * staffTries + s,
       fallback: false,
       referenceRoute: null,
     };
@@ -175,6 +220,77 @@ function tryGenerate(config: GenConfig, attempt: number, budget: { left: number 
     fail(`validate:${v.reason}`);
   }
   return first;
+}
+
+/** Every mission a week layout has to support (the five everyday ones and the finale). */
+const WEEK_MISSIONS: readonly MissionId[] = ['phone', 'vending', 'pizza', 'locker', 'gym', 'principal'];
+/** Staff rolls per day for a week school (it can't re-roll its building, so it tries harder on the staff). */
+const WEEK_STAFF_TRIES = 10;
+
+/** Layout attempts that work for every mission (pure function of seed + tier), in order. */
+function weekAttempts(seed: number, tier: TierId, limit: number): number[] {
+  const out: number[] = [];
+  for (let attempt = 0; attempt < MAX_TRIES && out.length < limit; attempt++) {
+    if (WEEK_MISSIONS.every((mission) => layoutStep({ seed, tier, mission, week: [] }, attempt) !== null)) out.push(attempt);
+  }
+  return out;
+}
+
+/** Week buildings tried before settling for the best one. */
+const WEEK_CANDIDATES = 6;
+
+/**
+ * SCHOOL WEEK: all five days at once, in one building (GDD §1). Candidate buildings (layout attempts that work for
+ * every mission) are tried in order; the first where every day validates — at that day's difficulty — wins. If none
+ * does within WEEK_CANDIDATES, the one with the most validated days is used, and its other days accept the next
+ * tighter clearance or ship flagged without a route. Pure and deterministic: (seed, tier, days) → the same week.
+ */
+export function generateWeek(seed: number, tier: TierId, days: readonly WeekDaySpec[], validate = true): SchoolPlan[] {
+  let s0 = seed;
+  let cands = weekAttempts(seed, tier, WEEK_CANDIDATES);
+  let fellBack = false;
+  if (cands.length === 0) {
+    // No layout of this seed fits all six missions: the tier's fallback seed (the same every day, too).
+    s0 = FALLBACK_SEEDS[tier];
+    cands = weekAttempts(s0, tier, WEEK_CANDIDATES);
+    fellBack = true;
+    if (cands.length === 0) throw new Error(`generateWeek: tier ${tier} has no week layout`);
+  }
+  const names = namesFor({ seed, tier, mission: 'phone' });
+  const build = (attempt: number, d: WeekDaySpec): SchoolPlan | null =>
+    tryGenerate({ seed: s0, tier, mission: d.mission, difficulty: d.difficulty, week: days, validate }, attempt, { left: WEEK_STAFF_TRIES }, WEEK_STAFF_TRIES);
+  const finish = (p: SchoolPlan): SchoolPlan => ({ ...p, ...names, seed, fallback: fellBack || p.fallback });
+  let best: { attempt: number; plans: SchoolPlan[] } | null = null;
+  for (const attempt of cands) {
+    const plans: SchoolPlan[] = [];
+    for (const d of days) {
+      const p = build(attempt, d);
+      if (!p) break;
+      plans.push(p);
+      if (validate && !p.referenceRoute) break; // this building fails a day: try the next one
+    }
+    const done = plans.length === days.length && (!validate || plans.every((p) => p.referenceRoute));
+    if (done) return plans.map(finish);
+    if (!best || plans.filter((p) => p.referenceRoute).length > best.plans.filter((p) => p.referenceRoute).length) best = { attempt, plans };
+  }
+  // Settle: the best building, every day built; days without a route try the tighter clearance.
+  const attempt = best ? best.attempt : cands[0]!;
+  return days.map((d) => {
+    const p = build(attempt, d);
+    if (!p) throw new Error('generateWeek: week layout failed on a later step');
+    const out = finish(p);
+    if (out.referenceRoute) return out;
+    const tighter = d.difficulty === 'freshman' ? 'junior' : d.difficulty === 'junior' ? 'senior' : null;
+    if (tighter) {
+      const v = validatePlan(out, d.difficulty, { clearance: tighter });
+      if (v.ok) {
+        out.referenceRoute = v.route;
+        out.snacks = placeSnacks(out, floodOpen(out.fine, out.anchors.start!.x, out.anchors.start!.z), new Rng(hashInts(s0, attempt, SYS_SNACK)));
+        return out;
+      }
+    }
+    return { ...out, fallback: true };
+  });
 }
 
 /** FNV-1a over the plan's gameplay-relevant content (determinism tests, challenge-code checks). */
