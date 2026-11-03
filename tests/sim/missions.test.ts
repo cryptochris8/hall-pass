@@ -135,7 +135,7 @@ describe('snacks', () => {
 });
 
 describe("PRINCIPAL'S OFFICE", () => {
-  it('Hargrove is on the roster at every school, hears double, and speeds up each time he spots you', () => {
+  it('Hargrove is on the roster at every school, hears further, and speeds up each time he spots you', () => {
     for (const tier of [1, 2, 3, 4, 5] as const) {
       const s = sim('principal', 3, tier);
       const h = hargroveIndex(s.plan);
@@ -154,12 +154,12 @@ describe("PRINCIPAL'S OFFICE", () => {
       st.pathI = 0;
       st.ignore = 1 << 20;
     }
-    b.staff[h]!.heat = 3;
+    b.staff[h]!.heat = 4;
     a.staff[h]!.dwell = b.staff[h]!.dwell = 0;
     const x0 = a.staff[h]!.x;
     run(a, idle, 30);
     run(b, idle, 30);
-    expect(Math.abs(b.staff[h]!.x - x0)).toBeGreaterThan(Math.abs(a.staff[h]!.x - x0) * 1.2);
+    expect(Math.abs(b.staff[h]!.x - x0)).toBeGreaterThan(Math.abs(a.staff[h]!.x - x0) * (1 + 4 * MISSION_RULES.hargroveBoost * 0.8));
   });
 });
 

@@ -161,8 +161,8 @@ export const MISSION_RULES = {
   /** Seconds you're frozen after a shoo. */
   shooSeconds: 0.75,
   /** PRINCIPAL'S OFFICE: Hargrove hears everything (hearing ×) and walks faster each time he spots you (+ per spot). */
-  hargroveHearing: 2,
-  hargroveBoost: 0.12,
+  hargroveHearing: 1.5,
+  hargroveBoost: 0.06,
   /** Snack pickup radius (m). */
   snackReach: 0.8,
 };

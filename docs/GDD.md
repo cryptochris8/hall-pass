@@ -239,7 +239,8 @@ Optional per run: **3 snack pickups** (gummy-bear packs) placed off the referenc
 - **GYM BAG:** one extra camera on the locker strip 2.75–3.5 m from your locker, sweeping past it, at every tier
   (even the middle school, which otherwise has none).
 - **PRINCIPAL'S OFFICE:** Hargrove is the first investigator on the roster (added if the school has none). He hears
-  at **×2** and walks and chases **+12 %** faster each time he spots you. The bell is **5:00** (three rooms).
+  at **×1.5** and walks and chases **+6 %** faster each time he spots you. The bell is **5:00**. The front office
+  is placed beside the principal's office (the finale is a raid on one wing).
 - Every twist is inside the fairness validator: the purchase must fit a quiet, unseen 6 s window; the pizza route
   must reach the counter inside the first-in-line window; the secretary, the gym camera and Hargrove's ears are
   simply part of the simulated staff.
@@ -366,6 +367,21 @@ Clearing a school week with an A average unlocks the next tier and its signature
   (`seed()`, `school()`, `staff()`, `route()`, `autopilot(skill)`, `warp(seconds)`, `showCones(bool)`).
   URL params: `?mission=phone|vending|pizza|locker|gym|principal`, `?tier=1..5`, `?seed=N`,
   `?difficulty=freshman|junior|senior`, `?code=H4L-L22`, `?test=1`.
+
+**As built (M7 balance, 2026-11).** Measured on a fixed set of 360 validated schools (5 schools × 3 difficulties ×
+6 missions × 4 seeds) with the skill-0.6 bot, three runs each:
+
+| | overall | worst school | worst mission |
+|---|---|---|---|
+| FRESHMAN (target ≥ 95 %) | 99 % | 96 % | PRINCIPAL'S OFFICE 92 % |
+| JUNIOR (target ≥ 85 %) | 92 % | St. Rigid's 84 % | PRINCIPAL'S OFFICE 63 % |
+| SENIOR (target ≥ 70 %) | 83 % | St. Rigid's 68 % | PRINCIPAL'S OFFICE 45 % |
+
+The perfect bot finishes every school unseen. Changes: the bot re-plans after being walked back or when stuck (it
+used to push into a wall until the bell, which made the finale look like a 23 % mission); the finale's front office
+sits beside the principal's; Hargrove ×1.5 hearing, +6 % per sighting. Suspicion fill rates barely move the
+imperfect bot (its failures are blunders, not slow meters), so the difficulty table keeps its design values; the
+finale stays the hardest period on purpose. Real playtests should set the final numbers.
 
 ## 13. Platform
 

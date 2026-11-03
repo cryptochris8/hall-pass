@@ -241,7 +241,17 @@ export function placeRooms(l: Layout, tier: TierDef, mission: MissionId, rng: Rn
       return d >= lo && d <= hi;
     });
     if (room.doors.length === 0) return false;
-    if (mission === 'principal' && !placeOne('office', [])) return false;
+    if (mission === 'principal') {
+      // The front office is the principal's suite: its door within two corridor cells of the principal's door (the
+      // finale is a raid on one wing, not three trips across the school). Anywhere if the wing has no room for it.
+      const pd = room.doors[0]!;
+      const near = corridorDistances(l, pd.cc, pd.cr);
+      const close = (p: Placement): boolean => p.edges.some((e) => {
+        const d = near[e.cr * l.cols + e.cc]!;
+        return d >= 0 && d <= 2;
+      });
+      if (!placeOne('office', [], close) && !placeOne('office', [])) return false;
+    }
   } else if (mission === 'locker') {
     // The friend's locker sits on a corridor cell in the distance band: checked by the furnisher via `lockerCell`.
     let ok = false;

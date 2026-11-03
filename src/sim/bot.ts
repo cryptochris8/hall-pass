@@ -41,6 +41,11 @@ export function createBot(plan: SchoolPlan, opts: BotOptions = {}): Bot {
   let pathI = 0;
   let pathFor = '';
   let lastCatches = 0;
+  /** Path mode: where it was last tick, and ticks without getting closer to the next waypoint (re-plan when stuck). */
+  let lastX = NaN;
+  let lastZ = NaN;
+  let bestD = Infinity;
+  let stuck = 0;
   /** Route mode: the schedule has reached an interact point for the goal still to do. */
   let armed = false;
   let lastCollected = 0;
@@ -79,7 +84,12 @@ export function createBot(plan: SchoolPlan, opts: BotOptions = {}): Bot {
         // Busted: the schedule is gone. Walk the rest.
         lastCatches = state.catches;
         mode = 'path';
+        pathFor = ''; // walked back to a checkpoint: the old path starts somewhere else
       }
+      // Teleported (shooed, walked back): any path in hand is stale.
+      if (Number.isFinite(lastX) && (s.x - lastX) * (s.x - lastX) + (s.z - lastZ) * (s.z - lastZ) > 2 * 2) pathFor = '';
+      lastX = s.x;
+      lastZ = s.z;
       // Press interact (one tick on, one off) when standing at the next goal.
       const next = missionGoals(plan).find((g) => !state.collected.includes(g));
       const a = next ? plan.anchors[next]! : null;
@@ -126,16 +136,30 @@ export function createBot(plan: SchoolPlan, opts: BotOptions = {}): Bot {
       mode = 'path';
       const target = a ?? plan.anchors.start!;
       const key = `${next ?? 'start'}`;
-      if (key !== pathFor || pathI * 2 >= path.length) {
+      if (key !== pathFor || pathI * 2 >= path.length || stuck > 45) {
         path = findPath(plan.fine, s.x, s.z, target.x, target.z) ?? [target.x, target.z];
         pathI = 0;
         pathFor = key;
+        bestD = Infinity;
+        stuck = 0;
       }
       while (pathI * 2 < path.length) {
         const wx = path[pathI * 2]!;
         const wz = path[pathI * 2 + 1]!;
-        if ((wx - s.x) * (wx - s.x) + (wz - s.z) * (wz - s.z) < 0.3 * 0.3) pathI++;
-        else break;
+        if ((wx - s.x) * (wx - s.x) + (wz - s.z) * (wz - s.z) < 0.3 * 0.3) {
+          pathI++;
+          bestD = Infinity;
+        } else break;
+      }
+      if (pathI * 2 < path.length) {
+        // Progress check toward the current waypoint (a wall or a body in the way stalls it).
+        const ex = path[pathI * 2]! - s.x;
+        const ez = path[pathI * 2 + 1]! - s.z;
+        const dw = Math.sqrt(ex * ex + ez * ez);
+        if (dw < bestD - 0.05) {
+          bestD = dw;
+          stuck = 0;
+        } else stuck++;
       }
       if (pathI * 2 >= path.length) return steer(target.x - s.x, target.z - s.z, 0.5, press);
       const near = state.staff.some((st, k) => plan.staff[k]!.archetype !== 'sweeper' && (st.x - s.x) * (st.x - s.x) + (st.z - s.z) * (st.z - s.z) < 7 * 7);
