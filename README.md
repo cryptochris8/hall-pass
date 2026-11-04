@@ -64,3 +64,15 @@ Note the numbers that feel best.
 Screenshots: `node tools/shot.mjs "/?test=1&seed=11&tier=4" shots/x.png --mobile --w 844 --h 390`.
 
 Live at https://hall-pass1.netlify.app (Netlify site `hall-pass1`, connected to this repo: every push to `main` deploys). Publishing needs Chris's explicit approval each time, so changes go to a branch until he approves.
+
+## Cover art
+
+`public/cover-art.jpg` (1200×630, the link-preview image) is rendered from the game itself:
+
+```
+node tools/walk.mjs "/?test=1&mission=locker&tier=2&difficulty=junior&seed=5151&autostart=1&quality=high" shots/cover \
+  --w 1200 --h 630 "until:window.__HP__ && window.__HP__.phase()==='playing'" "eval:window.__HP__.warp(8)" \
+  "eval:$(sed '/^\s*\/\//d' tools/cover-setup.js | tr '\n' ' ')" "sleep:3000" "shot:raw"
+```
+
+then convert `shots/cover-raw.png` to JPEG.
